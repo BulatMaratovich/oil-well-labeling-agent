@@ -1,0 +1,69 @@
+scenario_id: belt_break
+name: "Belt Break Detection"
+description: |
+  Detect when a drive belt connecting a motor to a pump has broken.
+
+  WHAT HAPPENS PHYSICALLY when a belt breaks:
+  - The motor continues running but without mechanical load
+  - Power drops to "idle" level — motor spinning freely, no pump resistance
+  - Idle power is characteristic of each motor: depends on motor size, winding resistance,
+    bearing friction. A 30 kW motor idles at 5-10 kW; a 0.5 kW motor idles at 0.05-0.15 kW
+  - The power level is STABLE relative to normal (less load variance = less oscillation)
+  - The transition is typically rapid: one or two samples to drop from load to idle
+
+  KEY DISCRIMINATOR vs planned stop:
+  - Belt break: power drops to IDLE level (non-zero, motor still running)
+  - Planned stop: power drops to NEAR-ZERO (motor fully off, only control electronics)
+  - The idle level is roughly 10-50% of full load power for most motors
+
+  KEY DISCRIMINATOR vs signal dropout:
+  - Belt break: readings CONTINUE at idle level (data present, just lower values)
+  - Signal dropout: NO readings — gap in timestamps
+
+target_label: "belt_break"
+
+competing_labels:
+  - label: "planned_stop"
+    description: >
+      Motor is intentionally shut down. Power drops to near-zero (just control
+      electronics, lighting, station transmission: typically 0-0.15 kW regardless
+      of motor size). Key: the absolute level is very close to zero and stable.
+  - label: "signal_dropout"
+    description: >
+      Communication failure between sensor and SCADA. No readings arrive during
+      the outage. NOT an equipment event. Detectable by gaps in timestamps.
+  - label: "low_load"
+    description: >
+      Motor operating normally but under reduced legitimate load (e.g., pump
+      lifting less fluid, seasonal production variation). Power reduced but
+      oscillation pattern preserved — motor is working, just doing less.
+  - label: "sensor_issue"
+    description: >
+      Faulty sensor producing incorrect readings (stuck value, sudden offset,
+      implausible readings). Check: is the value physically possible?
+      Does oscillation pattern look natural?
+
+physical_constraints: |
+  1. IDLE POWER SCALING: Idle power scales approximately with motor size.
+     For a motor with normal operating power P_op:
+     - Idle power P_idle ≈ 0.1 × P_op to 0.5 × P_op (rough rule of thumb)
+     - Stop power P_stop ≈ 0 to 0.15 kW (absolute, not relative — constant overhead)
+
+  2. TRANSITION: Belt breaks are usually sudden (1-2 sampling intervals).
+     A gradual decrease over many intervals suggests either load reduction or
+     motor slowdown before a different type of failure.
+
+  3. OSCILLATION PARADOX: Under load, motor power oscillates with pump cycle.
+     After belt break, oscillation typically DECREASES (motor spins freely,
+     more constant load). Very high oscillation post-drop is unusual for belt break.
+
+  4. NEGATIVE VALUES: Some sensors capture reactive power components.
+     Small negative values (-0.2 to 0 kW) can be normal noise. Large negative
+     values warrant investigation.
+
+  5. DURATION: A belt break remains until repaired — could be hours to days.
+     A brief dip of only 1-2 readings is more likely noise or transient.
+
+confidence_thresholds:
+  auto_label: 0.85
+  review: 0.60

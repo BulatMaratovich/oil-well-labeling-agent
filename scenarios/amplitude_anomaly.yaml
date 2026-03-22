@@ -1,0 +1,71 @@
+scenario_id: amplitude_anomaly
+name: "Equipment Failure via Amplitude Change"
+description: |
+  Detect equipment failure characterized by a sudden change in power oscillation
+  amplitude — either significantly higher or lower than the device's normal pattern.
+
+  AMPLITUDE INCREASE (failure modes):
+  - Mechanical imbalance: worn bearings, misalignment, loose coupling
+  - Pump cavitation: vapor bubbles causing irregular loading
+  - Electrical fault: phase imbalance, winding issues creating oscillating torque
+  - Belt slipping (before full break): intermittent engagement causing power spikes
+
+  AMPLITUDE DECREASE (failure modes):
+  - Partial blockage: restricted flow reduces load variation
+  - Sensor degradation: stuck or sluggish sensor underreporting variation
+  - Motor running unloaded: similar to belt break but may retain some amplitude
+
+  KEY DISCRIMINATOR from normal operation:
+  - amplitude_ratio > 2.5 or < 0.25 while level_ratio is near 1.0 (level unchanged)
+  - The LEVEL stays approximately normal — it's the VARIABILITY that changes
+  - If both level and amplitude change simultaneously → more complex failure
+
+  KEY DISCRIMINATOR from belt break:
+  - Amplitude anomaly: mean power level roughly unchanged (level_ratio ~0.8-1.2)
+  - Belt break: mean power level drops significantly (level_ratio < 0.5)
+
+target_label: "amplitude_anomaly"
+
+competing_labels:
+  - label: "normal_variation"
+    description: >
+      Some motors naturally have high amplitude oscillation (e.g., small motors
+      with cyclic loads). If amplitude_ratio is within 2x of normal and level
+      is unchanged, this may just be the device's characteristic pattern.
+  - label: "belt_break"
+    description: >
+      Belt break also changes amplitude (usually decreases). Key: belt break
+      causes a LARGE level drop (level_ratio < 0.5). Amplitude anomaly with
+      normal level is different.
+  - label: "sensor_issue"
+    description: >
+      Faulty sensor may produce artificially high variance (noise) or artificially
+      low variance (stuck/smoothed value). Check physical plausibility.
+  - label: "load_change"
+    description: >
+      Legitimate change in process conditions (different fluid viscosity, pump
+      settings changed) altering the load profile. Level may shift with amplitude.
+
+physical_constraints: |
+  1. AMPLITUDE vs LEVEL: The primary signature is amplitude change WITH level
+     approximately unchanged. If level drops significantly, belt_break is
+     more likely than amplitude_anomaly.
+
+  2. CAVITATION SIGNATURE: Cavitation often shows irregular, non-periodic
+     amplitude spikes. The variance of variance (kurtosis) is high.
+
+  3. BEARING FAILURE PROGRESSION: Bearing wear causes gradual amplitude increase
+     over weeks/months before sudden failure. A sudden jump is more likely
+     electrical or mechanical impact event.
+
+  4. SENSOR STUCK: A sensor stuck at a constant value shows amplitude_ratio
+     near 0 (no oscillation) while level_ratio may appear normal. The absolute
+     std will be near 0 regardless of operating level.
+
+  5. SCALE MATTERS: amplitude_ratio of 3.0 for a motor with 0.5 kW oscillation
+     normally means an extra 1.0 kW oscillation — significant. For a 30 kW motor
+     with 5 kW normal oscillation, 3.0x means 15 kW oscillation — critical.
+
+confidence_thresholds:
+  auto_label: 0.80
+  review: 0.55
