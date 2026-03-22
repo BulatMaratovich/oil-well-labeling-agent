@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Time-Series Labeling Agent</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1a1d2e;
+      border-bottom: 1px solid #2d3050;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 16px; font-weight: 600; color: #7b8cde; }
+    #session-badge {
+      font-size: 11px;
+      background: #2d3050;
+      padding: 2px 8px;
+      border-radius: 10px;
+      color: #9aa;
+      font-family: monospace;
+    }
+    #status-indicator {
+      margin-left: auto;
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      background: #1e2a20;
+      color: #4caf88;
+    }
+    #status-indicator.error { background: #2a1e1e; color: #e57373; }
+    #status-indicator.processing { background: #1e1e2a; color: #7b8cde; }
+
+    /* ── Main layout ── */
+    .main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Left panel: chart ── */
+    .chart-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid #2d3050;
+    }
+    .chart-toolbar {
+      padding: 8px 12px;
+      background: #141620;
+      border-bottom: 1px solid #2d3050;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .chart-toolbar select {
+      background: #1e2230;
+      color: #ccc;
+      border: 1px solid #3d4060;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    .chart-toolbar label { font-size: 12px; color: #888; }
+    #chart-container {
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ── Window list ── */
+    .window-list {
+      width: 220px;
+      overflow-y: auto;
+      background: #141620;
+      border-right: 1px solid #2d3050;
+      flex-shrink: 0;
+    }
+    .window-list h3 {
+      padding: 10px 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #666;
+      border-bottom: 1px solid #2d3050;
+      background: #1a1d2e;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .window-item {
+      padding: 8px 12px;
+      border-bottom: 1px solid #1e2130;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.15s;
+    }
+    .window-item:hover { background: #1e2230; }
+    .window-item.active { background: #1e2550; border-left: 3px solid #7b8cde; }
+    .window-item .win-device { color: #888; font-size: 11px; margin-bottom: 2px; }
+    .window-item .win-time { color: #aaa; }
+    .window-item .win-label {
+      margin-top: 3px;
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 8px;
+      display: inline-block;
+    }
+    .label-belt_break { background: #2a1e2a; color: #e57373; }
+    .label-planned_stop { background: #1e2a1e; color: #81c784; }
+    .label-uncertain { background: #2a2a1e; color: #ffb74d; }
+    .label-amplitude_anomaly { background: #1e252a; color: #64b5f6; }
+    .label-confirmed { opacity: 0.6; }
+
+    /* ── Right panel: chat ── */
+    .chat-panel {
+      width: 380px;
+      display: flex;
+      flex-direction: column;
+      background: #141620;
+      flex-shrink: 0;
+    }
+    .chat-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid #2d3050;
+      background: #1a1d2e;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .chat-header h3 { font-size: 13px; color: #aaa; flex: 1; }
+    #progress-text { font-size: 11px; color: #666; }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+    }
+    .msg {
+      max-width: 90%;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.assistant {
+      background: #1e2550;
+      border: 1px solid #2d3560;
+      align-self: flex-start;
+    }
+    .msg.user {
+      background: #1e2a20;
+      border: 1px solid #2d4030;
+      align-self: flex-end;
+    }
+    .msg.system {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      align-self: center;
+      font-size: 11px;
+      color: #666;
+      text-align: center;
+    }
+    .msg strong { color: #c5cff5; }
+    .msg code {
+      background: #0f1117;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    /* Quick action buttons */
+    .quick-actions {
+      padding: 8px 12px;
+      border-top: 1px solid #2d3050;
+      border-bottom: 1px solid #2d3050;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .quick-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      border-radius: 12px;
+      border: 1px solid #3d4060;
+      background: #1e2230;
+      color: #aaa;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .quick-btn:hover { background: #2d3560; color: #c5cff5; border-color: #5d6090; }
+    .quick-btn.confirm-btn { border-color: #4caf88; color: #4caf88; }
+    .quick-btn.confirm-btn:hover { background: #1e2a20; }
+    .quick-btn.skip-btn { border-color: #888; }
+    .quick-btn.export-btn { border-color: #7b8cde; color: #7b8cde; }
+    .quick-btn.export-btn:hover { background: #1e2550; }
+    .quick-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* Chat input */
+    .chat-input-area {
+      padding: 10px 12px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-shrink: 0;
+    }
+    #chat-input {
+      flex: 1;
+      background: #1e2230;
+      border: 1px solid #3d4060;
+      border-radius: 8px;
+      color: #ddd;
+      padding: 8px 12px;
+      font-size: 13px;
+      resize: none;
+      min-height: 38px;
+      max-height: 100px;
+      font-family: inherit;
+      line-height: 1.4;
+    }
+    #chat-input:focus { outline: none; border-color: #5d6090; }
+    #send-btn {
+      background: #3d4880;
+      color: #c5cff5;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    #send-btn:hover { background: #4d5890; }
+    #send-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── Upload overlay ── */
+    #upload-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .upload-card {
+      background: #1a1d2e;
+      border: 1px solid #3d4060;
+      border-radius: 12px;
+      padding: 36px;
+      width: 480px;
+      text-align: center;
+    }
+    .upload-card h2 { font-size: 20px; color: #c5cff5; margin-bottom: 8px; }
+    .upload-card p { font-size: 13px; color: #666; margin-bottom: 24px; }
+    .drop-zone {
+      border: 2px dashed #3d4060;
+      border-radius: 8px;
+      padding: 32px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+      margin-bottom: 16px;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: #7b8cde; }
+    .drop-zone p { font-size: 13px; color: #888; }
+    .drop-zone .icon { font-size: 36px; margin-bottom: 10px; }
+    #file-input { display: none; }
+
+    .scenario-select {
+      margin-bottom: 16px;
+      text-align: left;
+    }
+    .scenario-select label { font-size: 12px; color: #888; display: block; margin-bottom: 4px; }
+    .scenario-select select {
+      width: 100%;
+      background: #1e2230;
+      color: #ccc;
+      border: 1px solid #3d4060;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+
+    #upload-btn {
+      background: #3d4880;
+      color: #c5cff5;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 24px;
+      font-size: 14px;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s;
+    }
+    #upload-btn:hover { background: #4d5890; }
+    #upload-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* Column mapping modal */
+    #column-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    #column-modal.visible { display: flex; }
+    .modal-card {
+      background: #1a1d2e;
+      border: 1px solid #3d4060;
+      border-radius: 12px;
+      padding: 28px;
+      width: 420px;
+    }
+    .modal-card h3 { font-size: 15px; color: #c5cff5; margin-bottom: 16px; }
+    .form-row { margin-bottom: 12px; }
+    .form-row label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
+    .form-row select, .form-row input {
+      width: 100%;
+      background: #1e2230;
+      color: #ccc;
+      border: 1px solid #3d4060;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 13px;
+    }
+    .modal-btns { display: flex; gap: 8px; margin-top: 16px; }
+    .modal-btn-primary {
+      flex: 1;
+      background: #3d4880;
+      color: #c5cff5;
+      border: none;
+      border-radius: 6px;
+      padding: 8px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .modal-btn-primary:hover { background: #4d5890; }
+
+    #loading-spinner {
+      display: none;
+      text-align: center;
+      padding: 20px;
+      color: #666;
+      font-size: 13px;
+    }
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid #3d4060;
+      border-top-color: #7b8cde;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<!-- Upload overlay -->
+<div id="upload-overlay">
+  <div class="upload-card">
+    <h2>Time-Series Labeling Agent</h2>
+    <p>Upload a CSV with timestamps and power values to start interactive labeling</p>
+
+    <div class="scenario-select">
+      <label>Scenario (anomaly type to detect)</label>
+      <select id="scenario-select">
+        <option value="scenarios/belt_break.yaml">Belt Break Detection</option>
+        <option value="scenarios/amplitude_anomaly.yaml">Amplitude Anomaly</option>
+      </select>
+    </div>
+
+    <div class="drop-zone" id="drop-zone">
+      <div class="icon">📊</div>
+      <p>Drop CSV file here or <strong>click to browse</strong></p>
+      <input type="file" id="file-input" accept=".csv" />
+    </div>
+
+    <div id="upload-status" style="font-size:12px;color:#888;margin-bottom:12px;min-height:16px;"></div>
+    <button id="upload-btn" disabled>Upload and Start</button>
+  </div>
+</div>
+
+<!-- Column mapping modal -->
+<div id="column-modal">
+  <div class="modal-card">
+    <h3>Confirm Column Mapping</h3>
+    <p id="column-modal-msg" style="font-size:13px;color:#888;margin-bottom:14px;"></p>
+    <div class="form-row">
+      <label>Timestamp column</label>
+      <select id="col-timestamp"></select>
+    </div>
+    <div class="form-row">
+      <label>Value column (power / signal)</label>
+      <select id="col-value"></select>
+    </div>
+    <div class="form-row">
+      <label>Device ID column (optional — for multi-device files)</label>
+      <select id="col-device">
+        <option value="">(none — single device)</option>
+      </select>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-btn-primary" onclick="confirmColumns()">Confirm and Detect Windows</button>
+    </div>
+  </div>
+</div>
+
+<!-- Header -->
+<header>
+  <h1>⚡ Time-Series Labeling Agent</h1>
+  <span id="session-badge">no session</span>
+  <div id="status-indicator">Ready</div>
+</header>
+
+<!-- Main layout -->
+<div class="main">
+
+  <!-- Window list sidebar -->
+  <div class="window-list">
+    <h3>Anomalous Windows</h3>
+    <div id="window-list-items">
+      <div style="padding:16px;font-size:12px;color:#444;text-align:center;">
+        No windows detected yet
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-panel">
+    <div class="chart-toolbar">
+      <label>Device:</label>
+      <select id="device-selector" onchange="switchDevice()">
+        <option value="">—</option>
+      </select>
+      <span style="color:#444;font-size:11px;margin-left:auto;">Scroll to zoom · Drag to pan</span>
+    </div>
+    <div id="chart-container"></div>
+    <div id="loading-spinner"><span class="spinner"></span>Processing...</div>
+  </div>
+
+  <!-- Chat panel -->
+  <div class="chat-panel">
+    <div class="chat-header">
+      <h3>Agent Chat</h3>
+      <span id="progress-text"></span>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="msg system">Upload a CSV file to begin labeling</div>
+    </div>
+    <div class="quick-actions" id="quick-actions">
+      <button class="quick-btn confirm-btn" onclick="sendMessage('yes')" disabled id="btn-confirm">✓ Confirm</button>
+      <button class="quick-btn skip-btn" onclick="sendMessage('skip')" disabled id="btn-skip">Skip</button>
+      <button class="quick-btn" onclick="triggerProposal()" disabled id="btn-analyze">Analyze</button>
+      <button class="quick-btn export-btn" onclick="exportCsv()" disabled id="btn-export">⬇ Export CSV</button>
+    </div>
+    <div class="chat-input-area">
+      <textarea id="chat-input" placeholder="Type a message... (Enter to send)" rows="1"
+        onkeydown="handleKeydown(event)" oninput="autoResize(this)"></textarea>
+      <button id="send-btn" onclick="sendChatMessage()" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+let sessionId = null;
+let pollInterval = null;
+let lastState = null;
+let selectedDevice = null;
+let pendingProposal = false;
+
+// ── Upload flow ─────────────────────────────────────────────────────────────
+
+document.getElementById('drop-zone').addEventListener('click', () => {
+  document.getElementById('file-input').click();
+});
+
+document.getElementById('drop-zone').addEventListener('dragover', e => {
+  e.preventDefault();
+  e.currentTarget.classList.add('drag-over');
+});
+
+document.getElementById('drop-zone').addEventListener('dragleave', e => {
+  e.currentTarget.classList.remove('drag-over');
+});
+
+document.getElementById('drop-zone').addEventListener('drop', e => {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFileSelected(file);
+});
+
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) handleFileSelected(file);
+});
+
+let selectedFile = null;
+
+function handleFileSelected(file) {
+  if (!file.name.endsWith('.csv')) {
+    showUploadStatus('Please select a CSV file', 'error');
+    return;
+  }
+  selectedFile = file;
+  showUploadStatus(`Selected: ${file.name} (${(file.size/1024).toFixed(1)} KB)`, 'ok');
+  document.getElementById('upload-btn').disabled = false;
+}
+
+function showUploadStatus(msg, type) {
+  const el = document.getElementById('upload-status');
+  el.textContent = msg;
+  el.style.color = type === 'error' ? '#e57373' : '#4caf88';
+}
+
+document.getElementById('upload-btn').addEventListener('click', async () => {
+  if (!selectedFile) return;
+  const scenario = document.getElementById('scenario-select').value;
+
+  document.getElementById('upload-btn').disabled = true;
+  showUploadStatus('Creating session...', 'ok');
+
+  try {
+    // Create session
+    const res = await fetch('/sessions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scenario_path: scenario}),
+    });
+    const data = await res.json();
+    sessionId = data.session_id;
+    document.getElementById('session-badge').textContent = `session: ${sessionId}`;
+
+    showUploadStatus('Uploading and analyzing columns...', 'ok');
+
+    // Upload CSV
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    const upRes = await fetch(`/sessions/${sessionId}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    const upData = await upRes.json();
+
+    // Show column modal
+    populateColumnModal(upData);
+    document.getElementById('column-modal').classList.add('visible');
+    document.getElementById('upload-overlay').style.display = 'none';
+
+  } catch (err) {
+    showUploadStatus(`Error: ${err.message}`, 'error');
+    document.getElementById('upload-btn').disabled = false;
+  }
+});
+
+// ── Column mapping modal ─────────────────────────────────────────────────────
+
+function populateColumnModal(uploadData) {
+  const columns = uploadData.columns || [];
+  const tsCol = uploadData.timestamp_col;
+  const valCol = uploadData.value_col;
+  const devCol = uploadData.device_col;
+
+  document.getElementById('column-modal-msg').textContent = uploadData.message.split('\n')[0];
+
+  ['col-timestamp', 'col-value'].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = columns.map(c => `<option value="${c}">${c}</option>`).join('');
+  });
+  const devSel = document.getElementById('col-device');
+  devSel.innerHTML = '<option value="">(none)</option>' +
+    columns.map(c => `<option value="${c}">${c}</option>`).join('');
+
+  if (tsCol) document.getElementById('col-timestamp').value = tsCol;
+  if (valCol) document.getElementById('col-value').value = valCol;
+  if (devCol) document.getElementById('col-device').value = devCol;
+}
+
+async function confirmColumns() {
+  const tsCol = document.getElementById('col-timestamp').value;
+  const valCol = document.getElementById('col-value').value;
+  const devCol = document.getElementById('col-device').value || null;
+
+  document.getElementById('column-modal').classList.remove('visible');
+  setStatus('Detecting windows...', 'processing');
+
+  // Set columns
+  await fetch(`/sessions/${sessionId}/columns`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({timestamp_col: tsCol, value_col: valCol, device_col: devCol}),
+  });
+
+  // Start detection
+  await fetch(`/sessions/${sessionId}/detect`, {method: 'POST'});
+
+  // Start polling
+  startPolling();
+}
+
+// ── Polling ───────────────────────────────────────────────────────────────────
+
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(pollState, 2000);
+  pollState(); // immediate first poll
+}
+
+async function pollState() {
+  if (!sessionId) return;
+  try {
+    const res = await fetch(`/sessions/${sessionId}/state`);
+    if (!res.ok) return;
+    const state = await res.json();
+    handleStateUpdate(state);
+  } catch (e) {
+    console.warn('Poll error:', e);
+  }
+}
+
+function handleStateUpdate(state) {
+  const prev = lastState;
+  lastState = state;
+
+  // Update status indicator
+  const statusMap = {
+    'init': ['Initializing', ''],
+    'csv_loaded': ['CSV Loaded', ''],
+    'detecting': ['Detecting Windows', 'processing'],
+    'labeling': ['Labeling', ''],
+    'done': ['Complete', ''],
+    'error': ['Error', 'error'],
+  };
+  const [statusText, statusClass] = statusMap[state.status] || ['Unknown', ''];
+  setStatus(statusText, statusClass);
+
+  // Update window list
+  renderWindowList(state.windows, state.current_window_idx);
+
+  // Update device selector
+  updateDeviceSelector(Object.keys(state.series || {}));
+
+  // Render chart for current device
+  const curDevice = selectedDevice || Object.keys(state.series || {})[0];
+  if (curDevice && state.series[curDevice]) {
+    renderChart(curDevice, state.series[curDevice], state.windows, state.current_window_idx);
+  }
+
+  // Sync chat messages
+  syncChat(state.chat || []);
+
+  // Update progress
+  if (state.total_windows > 0) {
+    document.getElementById('progress-text').textContent =
+      `${state.labeled_count || 0} / ${state.total_windows} labeled`;
+  }
+
+  // Enable/disable buttons
+  const isLabeling = state.status === 'labeling';
+  const isDone = state.status === 'done';
+  document.getElementById('btn-confirm').disabled = !isLabeling;
+  document.getElementById('btn-skip').disabled = !isLabeling;
+  document.getElementById('btn-analyze').disabled = !isLabeling;
+  document.getElementById('btn-export').disabled = !(isDone || (isLabeling && state.labeled_count > 0));
+  document.getElementById('send-btn').disabled = !(isLabeling || isDone);
+  document.getElementById('chat-input').disabled = !(isLabeling || isDone);
+
+  // Auto-trigger proposal when we enter labeling state for the first time
+  // or when window changes
+  if (isLabeling && !pendingProposal) {
+    const curIdx = state.current_window_idx;
+    const curWin = state.windows[curIdx];
+    if (curWin && !curWin.label) {
+      pendingProposal = true;
+      triggerProposal();
+    }
+  }
+
+  // Stop polling when done
+  if (isDone && pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
+
+// ── Chart rendering ──────────────────────────────────────────────────────────
+
+let chartInitialized = {};
+
+function renderChart(deviceId, seriesData, windows, currentWindowIdx) {
+  const container = document.getElementById('chart-container');
+  const {timestamps, values} = seriesData;
+
+  // Filter windows for this device
+  const deviceWindows = (windows || []).filter(w => w.device_id === deviceId);
+  const curWin = windows && windows[currentWindowIdx];
+
+  // Base trace
+  const traces = [{
+    x: timestamps,
+    y: values,
+    type: 'scatter',
+    mode: 'lines',
+    name: deviceId,
+    line: {color: '#5d7de8', width: 1.5},
+    hovertemplate: '%{x}<br>%{y:.3f} kW<extra></extra>',
+  }];
+
+  // Add window highlights
+  const shapes = [];
+  const annotations = [];
+
+  for (const win of deviceWindows) {
+    const isActive = win.idx === currentWindowIdx;
+    const isConfirmed = win.confirmed;
+
+    let color = 'rgba(255,183,77,0.15)';
+    let borderColor = 'rgba(255,183,77,0.5)';
+    if (win.label === 'belt_break') { color = 'rgba(229,115,115,0.15)'; borderColor = 'rgba(229,115,115,0.5)'; }
+    else if (win.label === 'planned_stop') { color = 'rgba(129,199,132,0.15)'; borderColor = 'rgba(129,199,132,0.5)'; }
+    else if (win.label === 'amplitude_anomaly') { color = 'rgba(100,181,246,0.15)'; borderColor = 'rgba(100,181,246,0.5)'; }
+
+    if (isActive) {
+      color = color.replace('0.15', '0.3');
+      borderColor = borderColor.replace('0.5', '0.9');
+    }
+
+    shapes.push({
+      type: 'rect',
+      xref: 'x', yref: 'paper',
+      x0: win.start_time, x1: win.end_time,
+      y0: 0, y1: 1,
+      fillcolor: color,
+      line: {color: borderColor, width: isActive ? 2 : 1},
+      layer: 'below',
+    });
+
+    if (win.label) {
+      annotations.push({
+        x: win.start_time,
+        y: 1.02,
+        xref: 'x', yref: 'paper',
+        text: win.label.replace('_', ' '),
+        showarrow: false,
+        font: {size: 10, color: borderColor.replace('0.9', '1').replace('0.5', '1')},
+        xanchor: 'left',
+      });
+    }
+  }
+
+  const layout = {
+    paper_bgcolor: '#0f1117',
+    plot_bgcolor: '#141620',
+    margin: {l: 50, r: 20, t: 20, b: 40},
+    xaxis: {
+      color: '#555',
+      gridcolor: '#1e2230',
+      tickfont: {size: 11},
+      rangeslider: {visible: true, bgcolor: '#0f1117', bordercolor: '#2d3050'},
+    },
+    yaxis: {
+      color: '#555',
+      gridcolor: '#1e2230',
+      tickfont: {size: 11},
+      title: {text: 'Power (kW)', font: {size: 11, color: '#555'}},
+    },
+    showlegend: false,
+    shapes: shapes,
+    annotations: annotations,
+    hovermode: 'closest',
+    font: {family: 'system-ui, sans-serif', color: '#888'},
+  };
+
+  if (!chartInitialized[deviceId]) {
+    Plotly.newPlot('chart-container', traces, layout, {
+      responsive: true,
+      displayModeBar: true,
+      modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+      displaylogo: false,
+    });
+    chartInitialized[deviceId] = true;
+  } else {
+    Plotly.react('chart-container', traces, layout);
+  }
+
+  // Auto-zoom to active window with context
+  if (curWin && curWin.device_id === deviceId) {
+    const ctxStart = timestamps[curWin.context_start_idx] || curWin.start_time;
+    const ctxEnd = timestamps[curWin.context_end_idx] || curWin.end_time;
+    Plotly.relayout('chart-container', {'xaxis.range': [ctxStart, ctxEnd]});
+  }
+}
+
+// ── Window list ──────────────────────────────────────────────────────────────
+
+function renderWindowList(windows, currentIdx) {
+  const container = document.getElementById('window-list-items');
+  if (!windows || windows.length === 0) {
+    container.innerHTML = '<div style="padding:16px;font-size:12px;color:#444;text-align:center;">No windows detected</div>';
+    return;
+  }
+
+  container.innerHTML = windows.map(w => {
+    const isActive = w.idx === currentIdx;
+    const start = w.start_time.substring(0, 16).replace('T', ' ');
+    const labelHtml = w.label
+      ? `<span class="win-label label-${w.label} ${w.confirmed ? 'label-confirmed' : ''}">${w.label.replace('_', ' ')}</span>`
+      : '<span class="win-label" style="color:#444">unlabeled</span>';
+
+    return `<div class="window-item ${isActive ? 'active' : ''}" onclick="selectWindow(${w.idx})">
+      <div class="win-device">${w.device_id}</div>
+      <div class="win-time">${start}</div>
+      <div class="win-type" style="font-size:10px;color:#666;margin-top:2px;">${w.anomaly_type} (${w.anomaly_score.toFixed(2)})</div>
+      ${labelHtml}
+    </div>`;
+  }).join('');
+}
+
+function selectWindow(idx) {
+  if (!lastState) return;
+  lastState.current_window_idx = idx;
+  pendingProposal = false;
+  renderWindowList(lastState.windows, idx);
+
+  const win = lastState.windows[idx];
+  if (win) {
+    renderChart(win.device_id, lastState.series[win.device_id], lastState.windows, idx);
+    syncChat(lastState.chat || []);
+
+    // Trigger proposal if not yet labeled
+    if (!win.label) {
+      pendingProposal = true;
+      triggerProposal();
+    }
+  }
+}
+
+// ── Device selector ──────────────────────────────────────────────────────────
+
+function updateDeviceSelector(devices) {
+  const sel = document.getElementById('device-selector');
+  const cur = sel.value;
+  sel.innerHTML = devices.map(d => `<option value="${d}">${d}</option>`).join('');
+  if (cur && devices.includes(cur)) sel.value = cur;
+  else if (devices.length > 0) {
+    sel.value = devices[0];
+    selectedDevice = devices[0];
+  }
+}
+
+function switchDevice() {
+  selectedDevice = document.getElementById('device-selector').value;
+  chartInitialized[selectedDevice] = false;
+  if (lastState && lastState.series[selectedDevice]) {
+    renderChart(selectedDevice, lastState.series[selectedDevice], lastState.windows, lastState.current_window_idx);
+  }
+}
+
+// ── Chat ─────────────────────────────────────────────────────────────────────
+
+let lastChatLength = 0;
+
+function syncChat(messages) {
+  if (messages.length === lastChatLength) return;
+  lastChatLength = messages.length;
+
+  const container = document.getElementById('chat-messages');
+  container.innerHTML = messages.map(m => {
+    const content = formatMarkdown(m.content);
+    return `<div class="msg ${m.role}">${content}</div>`;
+  }).join('');
+  container.scrollTop = container.scrollHeight;
+}
+
+function formatMarkdown(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/^### (.+)$/gm, '<strong style="font-size:13px;color:#c5cff5">$1</strong>')
+    .replace(/^• /gm, '• ')
+    .replace(/\n/g, '<br>');
+}
+
+function appendChatMessage(role, content) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = formatMarkdown(content);
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  lastChatLength++;
+}
+
+async function sendMessage(text) {
+  if (!sessionId) return;
+  const windowIdx = lastState ? lastState.current_window_idx : 0;
+
+  appendChatMessage('user', text);
+  document.getElementById('btn-confirm').disabled = true;
+  document.getElementById('btn-skip').disabled = true;
+
+  try {
+    const res = await fetch(`/sessions/${sessionId}/chat`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: text, window_idx: windowIdx}),
+    });
+    const data = await res.json();
+    appendChatMessage('assistant', data.message);
+
+    if (data.confirmed) {
+      pendingProposal = false;
+      // Force a state refresh
+      await pollState();
+      // Trigger proposal for next window if not done
+      if (data.next_window_idx !== null && data.next_window_idx !== undefined) {
+        setTimeout(() => {
+          pendingProposal = true;
+          triggerProposal();
+        }, 500);
+      }
+    }
+  } catch (err) {
+    appendChatMessage('system', `Error: ${err.message}`);
+  } finally {
+    if (lastState && lastState.status === 'labeling') {
+      document.getElementById('btn-confirm').disabled = false;
+      document.getElementById('btn-skip').disabled = false;
+    }
+  }
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  autoResize(input);
+  await sendMessage(text);
+}
+
+function handleKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+}
+
+// ── Analysis trigger ──────────────────────────────────────────────────────────
+
+async function triggerProposal() {
+  if (!sessionId || !lastState) return;
+  const windowIdx = lastState.current_window_idx;
+  const win = lastState.windows[windowIdx];
+  if (!win) return;
+
+  setStatus('Analyzing...', 'processing');
+  showSpinner(true);
+
+  try {
+    await fetch(`/sessions/${sessionId}/windows/${windowIdx}/propose`, {method: 'POST'});
+    // Poll until we get the proposal
+    let attempts = 0;
+    while (attempts < 30) {
+      await sleep(2000);
+      await pollState();
+      const updated = lastState.windows[windowIdx];
+      if (updated && updated.label) {
+        break;
+      }
+      attempts++;
+    }
+  } catch (err) {
+    appendChatMessage('system', `Analysis error: ${err.message}`);
+  } finally {
+    pendingProposal = false;
+    showSpinner(false);
+  }
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+
+async function exportCsv() {
+  if (!sessionId) return;
+  window.location.href = `/sessions/${sessionId}/export`;
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function setStatus(text, cls) {
+  const el = document.getElementById('status-indicator');
+  el.textContent = text;
+  el.className = cls || '';
+}
+
+function showSpinner(show) {
+  document.getElementById('loading-spinner').style.display = show ? 'block' : 'none';
+  document.getElementById('chart-container').style.opacity = show ? '0.5' : '1';
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── On load: fetch available scenarios ──────────────────────────────────────
+
+(async () => {
+  try {
+    const res = await fetch('/scenarios');
+    const data = await res.json();
+    if (data.scenarios && data.scenarios.length > 0) {
+      const sel = document.getElementById('scenario-select');
+      sel.innerHTML = data.scenarios.map(s => {
+        const name = s.split('/').pop().replace('.yaml', '').replace(/_/g, ' ');
+        return `<option value="${s}">${name}</option>`;
+      }).join('');
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>
