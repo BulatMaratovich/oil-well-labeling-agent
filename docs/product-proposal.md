@@ -1,283 +1,229 @@
-# Product Proposal: Agent System for Automatic Labeling of Oil Well Time-Series Data
+# Product Proposal: Industrial Time-Series Expert Labeling Framework
 
 ## 1. Problem Motivation
 
-### The Labeling Bottleneck in Industrial Time-Series Data
+Industrial ML systems for equipment diagnostics require labeled historical time-series data. In practice, labels are scarce, expensive, inconsistent, and hard to trust — not primarily because labeling is slow, but because it is genuinely difficult:
 
-Supervised machine learning models for equipment diagnostics depend on labeled training data. In the oil and gas industry, the primary source of diagnostic information for rod pumping systems is the **wattmeterogram** — a time-series recording of the electric motor power consumption during the pumping cycle. Characteristic distortions in these curves correspond to specific equipment states: normal operation, rod break, belt break, idle motor, overload, and other failure modes.
+- The same signal pattern can be a real failure, a planned stop, a sensor dropout, or a new stable operating mode.
+- Correct interpretation requires combining signal behavior with maintenance records, equipment history, and field context.
+- Different engineers label the same ambiguous segment differently.
+- Existing labeled datasets are often biased toward obvious cases, missing the look-alike non-failures that matter most for model training.
 
-Labeling these time series is difficult and expensive for several reasons:
+### Why This Is Not a Classification Problem
 
-- **Domain expertise requirement.** Interpreting wattmeterograms requires knowledge of pumping mechanics, electrical engineering, and field operations. Only a small number of specialists possess this combination of skills.
-- **Context dependency.** The same waveform anomaly can indicate a genuine failure or a benign operational event (e.g., a planned shutdown, a load test, a sensor recalibration). Correct labeling requires cross-referencing the time series with maintenance logs, equipment history, and operational schedules.
-- **Volume mismatch.** Modern SCADA systems collect wattmeterograms continuously across hundreds or thousands of wells. The volume of unlabeled data far exceeds the capacity of human annotators.
-- **Label ambiguity.** Transitional states, compound failures, and degraded sensor quality create ambiguous segments where even experts may disagree. Without structured guidelines and evidence trails, labeling consistency suffers.
-- **Retroactive analysis cost.** Historical archives of wattmeterograms are a valuable resource for model training, but retroactive labeling is rarely prioritized because of its high cost relative to immediate operational needs.
+The standard framing — "train a model to classify windows as normal or failure" — misses the core difficulty.
 
-### Why Agent Systems Are Useful Here
+A window is not labeled in isolation. Correct labeling depends on:
+- **What is normal for this well**, not for a generic pump
+- **What happened around this time** (maintenance, replacements, seasonal load changes)
+- **Whether the pattern is new** or has been seen before on this well
+- **Whether the deviation is sustained** or a transient artifact
 
-The labeling task is not purely algorithmic — it requires integrating heterogeneous sources of evidence (signal features, maintenance context, engineering rules) and making judgment calls under uncertainty. This makes it poorly suited to a single monolithic model but well-suited to a **multi-agent architecture** where specialized agents handle different aspects of the reasoning:
+Naive window classifiers produce unacceptable false positive rates precisely because they cannot answer these questions.
 
-- **Decomposition of complexity.** Each agent focuses on a well-defined subtask (feature extraction, anomaly detection, context retrieval, label generation, confidence estimation), making the system easier to develop, test, and debug.
-- **Tool integration.** Signal processing and statistical analysis are best performed by deterministic tools (Python libraries, statistical tests). Contextual reasoning and evidence synthesis are better handled by LLM-based reasoning. An agent architecture naturally combines both.
-- **Transparency and auditability.** Each agent produces intermediate outputs that can be inspected, logged, and reviewed. This creates an evidence trail that supports human validation and system improvement.
-- **Iterative refinement.** Agent pipelines can be extended incrementally — adding new failure types, new context sources, or improved detection methods — without redesigning the entire system.
+### What Is Actually Needed
 
-## 2. Project Goal
+A labeling system that works like a domain expert:
 
-Build a proof-of-concept multi-agent system that **automatically suggests labels for anomalous segments of oil well wattmeterograms** using a combination of:
+1. Looks at the full series history before judging individual segments
+2. Compares against what is normal for this specific well
+3. Checks the maintenance and operational record before calling anything a failure
+4. Applies explicit, auditable rules that engineers can inspect and correct
+5. Distinguishes true deviations from look-alike confounders
+6. Produces a contrastive labeled dataset: not just positives and negatives, but subtly-wrong cases too
 
-- Statistical signal analysis (feature extraction, anomaly detection)
-- Contextual retrieval from a knowledge base of maintenance logs, equipment metadata, and engineering rules (RAG)
-- LLM-based reasoning to synthesize evidence and generate label proposals with explanations and confidence scores
+---
 
-The system is designed as an **assistive tool**: it proposes labels that human engineers validate. The validated labels form training datasets for classical ML models used in production diagnostics.
+## 2. Product Thesis
 
-## 3. Success Metrics
+This project builds a **global-to-local rule-based expert labeling framework** for industrial time-series data.
+
+The product does not replace domain experts. It gives them a structured, fast, auditable workflow:
+
+- Formalizes the labeling task as a `TaskSpec` (signals, labels, confounders, context sources, rules)
+- Analyzes the full series globally to find regimes and detect candidates
+- Retrieves and extracts relevant context facts from maintenance records
+- Applies explicit versioned rules to propose labels with a full rule trace
+- Presents candidates to engineers with signal plots, regime context, historical comparisons, and fact summaries
+- Grows the ruleset from engineer corrections, not from statistical model updates
+
+**The core claim:** a small, well-designed ruleset — built and maintained by engineers — produces better, more trustworthy labeled data than a large implicit model.
+
+---
+
+## 3. Project Goal
+
+Build a proof-of-concept framework that demonstrates the following on the belt-break reference domain:
+
+1. Full-series analysis yields better candidates than window-by-window anomaly scoring
+2. Explicit rules with a full trace are more auditable and correctable than model confidences
+3. Distinguishing true failures from look-alike confounders is tractable with the right context
+4. The labeled dataset produced includes contrastive negatives useful for downstream CatBoost training
+5. The framework is reusable: a second deviation type or installation family needs a new TaskSpec and adapter, not a core redesign
+
+---
+
+## 4. Success Metrics
 
 ### Product Metrics
 
-| Metric | Target | Measurement Method |
-|--------|--------|--------------------|
-| Reduction in manual labeling time | 50% reduction compared to fully manual labeling | Timed comparison on a reference dataset |
-| Label acceptance rate | ≥ 70% of auto-suggested labels accepted by engineers without modification | Tracked through the validation interface |
-| Engineer satisfaction | Qualitative positive feedback on usefulness of explanations and confidence scores | Post-demo survey |
+| Metric | Target | Method |
+|--------|--------|--------|
+| Candidate recall | ≥ 90% of verified belt-break events appear as candidates | Evaluation against ground truth from verified ADKU/VSP |
+| False positive rate on confounders | planned_stop / sensor_issue mislabeled as belt_break < 10% | Ground truth comparison |
+| Rule coverage | ≥ 80% of reviewed candidates resolved by a fired rule (not `unknown`) | Audit log |
+| Engineer review time | 50% reduction vs fully manual labeling | Timed comparison on reference dataset |
+| Contrastive label balance | Dataset contains at least 4 of 6 label classes with ≥ 10 examples each | Export statistics |
 
-### Agent Metrics
+### Quality Metrics
 
-| Metric | Target | Measurement Method |
-|--------|--------|--------------------|
-| Anomaly detection recall | ≥ 90% of known anomalous segments detected | Evaluated against a pre-labeled test set |
-| Label confidence calibration | Predicted confidence correlates with actual accuracy (calibration error < 0.15) | Reliability diagram on the test set |
-| Retrieval relevance | ≥ 80% of retrieved context documents rated as relevant by engineers | Manual evaluation of retrieval results |
-| False positive reduction | ≥ 50% reduction in false positives compared to signal-only detection | Comparison with baseline anomaly detector |
+| Metric | Target | Method |
+|--------|--------|--------|
+| `precision@accepted` | ≥ 75% accepted labels match ground truth | Post-labeling ground truth comparison |
+| Unknown-case quality | ≥ 90% of `unknown` cases are genuinely ambiguous or novel | Manual audit of unknown set |
+| Fact extraction accuracy | ≥ 85% of extracted facts match source document | Spot check of 50 random extractions |
+| Regression pass rate | 100% of confirmed examples still correctly labeled after rule updates | Automated regression check |
 
-### Technical Metrics
+### Framework Metrics
 
-| Metric | Target | Measurement Method |
-|--------|--------|--------------------|
-| P95 end-to-end latency | < 60 seconds per segment | Measured across the full pipeline |
-| Pipeline success rate | ≥ 95% of submitted segments processed without errors | Error tracking in logs |
-| System availability during demo | No unrecoverable failures during demonstration | Monitored during demo session |
+| Metric | Target | Method |
+|--------|--------|--------|
+| Rule reuse | Belt-break ruleset requires no core code changes to add a second deviation type | Integration test |
+| Profile persistence | WellProfile correctly loaded and updated across runs | Resume test |
+| End-to-end latency P95 | < 120 seconds per candidate (including human review) | Timing in audit log |
 
-## 4. Use Case Scenarios
+---
 
-### Scenario 1: Normal Operation Labeling
+## 5. Use Case Scenarios
 
-**Input.** A wattmeterogram segment showing a stable, periodic power consumption pattern.
+### Scenario 1: Full Series Analysis Finds What Window-by-Window Misses
 
-**Expected behavior.** The Time-Series Analysis Agent extracts features that fall within normal operating ranges. The Event Detection Agent finds no significant anomalies. The Labeling Agent assigns the label **"normal_operation"** with high confidence (> 0.9). The Review Agent passes the label without flagging it for human review.
+**Input.** A 6-month active power series for one rod pumping well.
 
-**Value.** Bulk labeling of normal segments saves engineers from inspecting thousands of routine records.
+**Expected behavior.** The Global Series Profiler detects a structural change-point on day 47. The Historical Profile Builder finds this regime type has not appeared in the well's history. The Candidate Event Detector flags it. The local analysis and context retrieval reveal no maintenance event. The Rule Engine fires the belt_break rule and routes to review.
 
-### Scenario 2: Rod Break Detection
+**Value.** A window classifier looking at 2-hour windows around day 47 sees ambiguous data. The global profiler sees a regime that is genuinely new for this well.
 
-**Input.** A wattmeterogram showing a sudden drop in load-bearing phase amplitude, followed by an irregular low-power pattern.
+---
 
-**Expected behavior.** The Event Detection Agent flags the segment as anomalous (sudden amplitude change). The Context Retrieval Agent finds no scheduled maintenance for the well during that time period but retrieves engineering rules describing rod break signatures. The Labeling Agent proposes the label **"rod_break"** with moderate-to-high confidence (0.7–0.9) and generates an explanation citing the signal features and absence of maintenance context. The Review Agent passes the label to the engineer for validation with supporting evidence.
+### Scenario 2: Confounder Correctly Excluded
 
-**Value.** The system provides not just the label but a structured explanation that helps the engineer make a faster, more informed decision.
+**Input.** A well showing an abrupt power drop followed by near-zero readings for 6 hours.
 
-### Scenario 3: False Anomaly Due to Maintenance Event
+**Expected behavior.** The Candidate Event Detector flags the segment. The Context Fact Extractor parses a maintenance report and extracts: `{event_type: planned_stop, date: same day, asset_id: same well}`. The Rule Engine fires the planned_stop rule at Priority 2, blocking the belt_break rule. Label = `planned_stop`.
 
-**Input.** A wattmeterogram showing an abrupt shutdown and restart pattern during a period when scheduled maintenance was performed.
+**Value.** The key differentiator: the system avoids a false positive because it has explicit context facts and explicit rules for confounders — not because an LLM guessed correctly.
 
-**Expected behavior.** The Event Detection Agent flags the segment as anomalous (unexpected shutdown). The Context Retrieval Agent finds a matching maintenance log entry for the well and time period. The Labeling Agent recognizes the maintenance context and proposes the label **"planned_maintenance"** instead of a failure label. Confidence is moderate (0.6–0.8) because the temporal overlap requires judgment.
+---
 
-**Value.** This is the core differentiator of the system — reducing false positives by incorporating contextual knowledge that a signal-only detector cannot access.
+### Scenario 3: Engineer Corrects a Rule, System Updates
 
-### Scenario 4: Missing or Noisy Sensor Data
+**Input.** Engineer reviews a case labeled `planned_stop` but corrects it to `belt_break`. Correction note: "The maintenance report refers to the previous day, not this event."
 
-**Input.** A wattmeterogram with missing data points, sensor dropouts, or high-frequency noise.
+**Expected behavior.** The correction is logged with the reason. The Rule Miner detects the pattern: planned_stop rule is firing on maintenance records from adjacent days. It drafts a rule update: "Planned_stop exclusion applies only if maintenance record date overlaps candidate segment, not if within ±1 day." Engineer approves. Updated rule is versioned. Regression check runs against all confirmed examples.
 
-**Expected behavior.** The Time-Series Analysis Agent detects data quality issues (gaps, noise level above threshold). The system applies preprocessing (interpolation or filtering) where appropriate and flags quality concerns. If the data quality is too low for reliable analysis, the Labeling Agent assigns the label **"insufficient_data_quality"** and the Review Agent flags the segment for mandatory human review with an explanation of the quality issues found.
+**Value.** The system learns from corrections by updating rules — producing an explicit, auditable, human-approved change to the labeling logic.
 
-**Value.** The system avoids producing unreliable labels from poor data, maintaining dataset quality and engineer trust.
+---
 
-### Scenario 5: Overload Condition
+### Scenario 4: Stable Unusual Regime
 
-**Input.** A wattmeterogram showing sustained elevated power consumption above the nominal operating range.
+**Input.** A well that has operated at 30% lower power for 3 months. No maintenance record explains it.
 
-**Expected behavior.** The Event Detection Agent identifies persistent above-threshold power consumption. The Context Retrieval Agent checks for operational changes (new pump settings, fluid property changes) and retrieves engineering rules for overload conditions. The Labeling Agent proposes the label **"overload"** with supporting evidence. The Review Agent assesses confidence and routes to human validation.
+**Expected behavior.** The Global Series Profiler detects a long stable regime. The Candidate Event Detector flags the transition as a candidate. The Rule Engine checks: the new regime is stable (low internal variance, long duration), no failure signatures in local features, no context explanation. Label = `stable_unusual_regime`. Routed to review.
 
-**Value.** Overload conditions may develop gradually, making them easy to miss in manual review of large datasets.
+**Value.** The system produces a useful label that is neither `belt_break` nor `normal`. This class is critical for training CatBoost to distinguish developing degradation from abrupt failures.
 
-## 5. Constraints
+---
+
+### Scenario 5: Unknown on Genuinely Ambiguous Case
+
+**Input.** A signal with moderate deviation, no maintenance context, ambiguous local features, and a pattern that partially matches two rules.
+
+**Expected behavior.** The Rule Engine detects a rule conflict (belt_break rule and stable_unusual_regime rule both partially match). Label = `unknown`, routing = mandatory review. Review UI shows both matching rules and why each partially applies.
+
+**Value.** The system does not force a label when evidence is insufficient. The ambiguous case is stored separately and can inform future rule refinement.
+
+---
+
+## 6. Constraints
 
 ### Technical Constraints
 
 | Constraint | Implication |
 |------------|-------------|
-| **PoC-scale dataset** | The system will be demonstrated on a dataset of 100–500 wattmeterogram segments. It is not optimized for datasets of millions of records. |
-| **CPU-based analysis** | All signal processing and statistical analysis will run on CPU. No GPU resources are required or assumed. |
-| **Simulated knowledge base** | The RAG knowledge base will contain a curated set of representative maintenance logs, equipment specs, and engineering rules — not a full production database. |
-| **Single LLM provider** | The PoC will use a single LLM API for all reasoning tasks. Multi-provider fallback is out of scope. |
+| CPU-only runtime | Signal processing, profiling, and rule evaluation run without GPU |
+| Single LLM provider | Anthropic for discovery and fact extraction; no multi-provider fallback |
+| Local-first deployment | No cloud services except LLM API |
+| PoC-scale data | Belt-break reference domain; hundreds to low thousands of candidate events |
+| Weak ground truth | Verified ADKU/VSP reports are the source of truth; engineer acceptance alone is not enough |
+
+### Architecture Constraints
+
+| Constraint | Implication |
+|------------|-------------|
+| LLM not in critical path for labeling | Pipeline must produce label proposals without LLM if fact extraction fails |
+| Rules must be auditable | Every label must be traceable to a rule_id and a rule_trace |
+| No auto-label in PoC v1 | All candidates go to engineer review |
+| No peer comparison in PoC v1 | Phase 2 extension |
+| Starter ruleset hardcoded from domain knowledge | Ruleset grows from engineer corrections over time |
 
 ### Operational Constraints
 
 | Constraint | Implication |
 |------------|-------------|
-| **Small engineering team** | 2–3 engineers developing the system. Architecture must be modular enough for parallel development. |
-| **Limited development time** | 1–2 weeks for implementation. The system must prioritize core pipeline functionality over polish. |
-| **No production infrastructure** | The system will run locally or on a single cloud instance. No container orchestration, load balancing, or production monitoring. |
+| Small team (2–3 engineers) | Modular architecture; clear stage boundaries |
+| Short timeline | PoC validates framework, not all future extensions |
+| No production infrastructure | Local files, local vector store, single-process Python |
 
-## 6. Architecture Sketch
+---
 
-The system is organized as a **multi-agent pipeline** with six specialized agents coordinated by an orchestrator. Each agent has a defined responsibility, a set of tools it can invoke, and a structured output format.
+## 7. Architecture Summary
 
-### Agent Descriptions
+The framework has ten pipeline stages organized into four phases:
 
-#### Orchestrator Agent
+**Phase 1 — Signal understanding (global)**
+InputNormalizer → SignalSanitizer → GlobalSeriesProfiler → HistoricalProfileBuilder
 
-**Role.** Controls the end-to-end workflow. Receives the input data, dispatches tasks to downstream agents in sequence, handles errors and retries, and assembles the final output.
+**Phase 2 — Candidate identification (global-to-local)**
+CandidateEventDetector → LocalSegmentAnalyzer
 
-**Responsibilities:**
-- Parse and validate the input CSV
-- Manage pipeline state (which segments have been processed, current stage)
-- Route data between agents
-- Aggregate results into the final label report
-- Handle agent failures gracefully (log errors, skip segments, report partial results)
+**Phase 3 — Labeling (context + rules)**
+ContextFactExtractor → RuleEngine
 
-**Tools:** Pipeline state management, error handling utilities.
+**Phase 4 — Review and learning**
+HumanReview → Rule/Profile Update
 
-#### Time-Series Analysis Agent
+LLM is used in Phase 1 (discovery), Phase 3 (fact extraction from free text, explanation generation for review), and as a draft rule assistant after corrections. It is not used for anomaly detection or label assignment.
 
-**Role.** Extracts numerical features from raw wattmeterogram data to produce a structured representation suitable for downstream reasoning.
+---
 
-**Responsibilities:**
-- Segment the time series into individual pumping cycles
-- Compute statistical features: mean, variance, skewness, kurtosis of power consumption per cycle
-- Compute periodicity metrics: cycle duration stability, frequency spectrum characteristics
-- Compute waveform shape descriptors: peak-to-trough ratio, rise/fall time, area under curve
-- Flag data quality issues: missing values, noise level, sensor dropouts
+## 8. Reference Domain and Expansion Path
 
-**Tools:** Python signal processing libraries (NumPy, SciPy), statistical analysis functions. This agent operates entirely through deterministic tool execution — no LLM reasoning is required.
+**PoC v1 reference domain:**
+- Equipment: rod pumping units
+- Signal: active power time series
+- Task: belt-break deviation labeling
+- Context: ADKU/VSP maintenance reports, equipment metadata
+- Starter rules: hardcoded from domain expert knowledge
+- Confounders: planned_stop, planned_maintenance, sensor_issue, stable_unusual_regime
 
-#### Event Detection Agent
+**Expansion path:**
+1. Validate framework on belt-break; grow ruleset through review loop
+2. Add a second deviation type (e.g., idle motor) as new rules in the same TaskSpec
+3. Add a second installation family via a new DomainAdapter with a new starter ruleset
+4. Add peer comparison as a Phase 2 context signal
 
-**Role.** Identifies candidate anomalous segments based on the extracted features.
+The core pipeline, rule engine, memory, and review loop do not change between expansions.
 
-**Responsibilities:**
-- Compare extracted features against baseline operating profiles
-- Apply threshold-based and statistical anomaly detection methods (z-score, IQR, change-point detection)
-- Classify deviations by type: amplitude anomaly, frequency anomaly, waveform distortion, data quality issue
-- Output a ranked list of candidate anomalous segments with deviation scores
+---
 
-**Tools:** Statistical anomaly detection libraries, threshold configuration. This agent primarily uses deterministic tools with optional LLM reasoning for ambiguous edge cases.
+## 9. What This Product Is Not
 
-#### Context Retrieval Agent
+- Not a one-click automatic failure detector
+- Not a universal classifier that generalizes from zero examples
+- Not a replacement for domain experts
+- Not a real-time monitoring or alerting system
+- Not a production MLOps stack
 
-**Role.** Retrieves relevant engineering knowledge and maintenance context for each candidate anomalous segment using a Retrieval-Augmented Generation (RAG) approach.
-
-**Responsibilities:**
-- Formulate retrieval queries based on the well identifier, time window, and detected anomaly type
-- Search the knowledge base for: maintenance logs matching the well and time period, equipment specifications for the well's pump configuration, engineering rules describing failure mode signatures
-- Rank and filter retrieved documents by relevance
-- Summarize relevant context into a structured format for the Labeling Agent
-
-**Knowledge base contents:**
-- Maintenance and repair logs (date, well ID, work performed, parts replaced)
-- Equipment metadata (pump model, rod string configuration, motor specifications)
-- Engineering rules and heuristics for failure mode identification
-
-**Tools:** Vector store for semantic search, keyword-based retrieval, document parsing utilities.
-
-#### Labeling Agent
-
-**Role.** Generates proposed labels for each candidate segment by synthesizing signal-level evidence and retrieved context.
-
-**Responsibilities:**
-- Receive the feature summary from the Time-Series Analysis Agent, the anomaly report from the Event Detection Agent, and the context summary from the Context Retrieval Agent
-- Reason over the combined evidence to determine the most likely equipment state
-- Assign a label from a predefined taxonomy: `normal_operation`, `rod_break`, `belt_break`, `idle_motor`, `overload`, `planned_maintenance`, `sensor_issue`, `unknown`
-- Generate a natural-language explanation citing specific evidence (signal features, maintenance records, engineering rules)
-- Estimate a raw confidence score based on evidence strength and consistency
-
-**Tools:** LLM reasoning (this is the primary LLM-intensive agent), structured output formatting.
-
-#### Review Agent
-
-**Role.** Estimates confidence in each proposed label and decides whether the label can be auto-accepted or requires mandatory human validation.
-
-**Responsibilities:**
-- Evaluate the Labeling Agent's reasoning for consistency and completeness
-- Calibrate the confidence score against predefined thresholds
-- Apply routing rules: high-confidence labels (> 0.85) are auto-accepted with audit logging; medium-confidence labels (0.5–0.85) are presented for human review with supporting evidence; low-confidence labels (< 0.5) are flagged as uncertain and require mandatory review
-- Check for known failure modes: contradictory evidence, missing context, hallucination indicators
-
-**Tools:** LLM reasoning for consistency checking, threshold configuration, routing logic.
-
-### System Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Orchestrator Agent                         │
-│                  (workflow control, state mgmt)                  │
-└──────┬──────────────┬───────────────┬──────────────┬────────────┘
-       │              │               │              │
-       ▼              ▼               ▼              ▼
-┌──────────┐  ┌──────────────┐  ┌──────────┐  ┌──────────┐
-│Time-Series│  │    Event     │  │ Context  │  │ Labeling │
-│ Analysis  │──▶  Detection   │──▶Retrieval │──▶  Agent   │
-│  Agent    │  │    Agent     │  │  Agent   │  │          │
-│ [Tools]   │  │[Tools + LLM] │  │[RAG+LLM]│  │  [LLM]   │
-└──────────┘  └──────────────┘  └──────────┘  └────┬─────┘
-                                                    │
-                                                    ▼
-                                              ┌──────────┐
-                                              │  Review  │
-                                              │  Agent   │
-                                              │  [LLM]   │
-                                              └────┬─────┘
-                                                   │
-                                                   ▼
-                                            ┌────────────┐
-                                            │   Human    │
-                                            │ Validation │
-                                            └────────────┘
-```
-
-## 7. Data Flow
-
-### Pipeline Stages
-
-The data flows through the system in a sequential pipeline. Each stage transforms the data and passes a structured output to the next stage.
-
-```
-Raw CSV ──▶ Feature Extraction ──▶ Anomaly Detection ──▶ Context Retrieval ──▶ Label Proposal ──▶ Confidence Review ──▶ Human Validation
-```
-
-### Detailed Data Flow
-
-| Stage | Input | Processing | Output | Execution Mode |
-|-------|-------|------------|--------|----------------|
-| **1. Ingestion** | Raw CSV file (timestamps, power values, well ID) | Validate format, parse columns, segment into cycles | Structured time-series segments | Deterministic (Python) |
-| **2. Feature Extraction** | Time-series segments | Statistical and waveform analysis | Feature vectors per segment (20–30 numerical features) | Deterministic (NumPy, SciPy) |
-| **3. Anomaly Detection** | Feature vectors + baseline profiles | Statistical tests, threshold comparison, change-point detection | Ranked list of candidate anomalous segments with deviation scores | Deterministic (Python) with optional LLM for edge cases |
-| **4. Context Retrieval** | Anomaly candidates (well ID, time window, anomaly type) | Query knowledge base, rank results, summarize context | Structured context summaries per candidate | RAG (vector search + LLM summarization) |
-| **5. Label Proposal** | Feature summary + anomaly report + context summary | Multi-evidence reasoning, label assignment, explanation generation | Proposed labels with explanations and raw confidence scores | LLM reasoning |
-| **6. Confidence Review** | Proposed labels with explanations | Consistency checking, confidence calibration, routing | Final labels with calibrated confidence and routing decision (auto-accept / human-review / mandatory-review) | LLM reasoning + rule-based thresholds |
-| **7. Human Validation** | Labeled segments with explanations and confidence | Engineer review and correction | Validated labels for dataset export | Human decision |
-
-### Tool vs. LLM Boundary
-
-The system explicitly separates **deterministic tool execution** from **LLM-based reasoning**:
-
-- **Stages 1–3** (Ingestion, Feature Extraction, Anomaly Detection) are primarily **tool-based**. They use Python libraries for signal processing and statistical analysis. Results are reproducible and verifiable. The Event Detection Agent may optionally invoke LLM reasoning for ambiguous edge cases, but the default path is fully deterministic.
-
-- **Stage 4** (Context Retrieval) uses a **hybrid approach**. Document retrieval relies on vector similarity search (a tool). Summarization and relevance filtering use LLM reasoning.
-
-- **Stages 5–6** (Label Proposal, Confidence Review) are primarily **LLM-based**. These stages require synthesizing heterogeneous evidence and making judgment calls that benefit from natural language reasoning. Structured output schemas constrain the LLM's responses to the predefined label taxonomy.
-
-- **Stage 7** (Human Validation) is **human-driven** and outside the agent system.
-
-### State Management
-
-The Orchestrator Agent maintains a **pipeline state object** that tracks:
-
-- Which segments have been processed and their current stage
-- Intermediate outputs from each agent (for auditability and debugging)
-- Error states and retry counts
-- Final aggregated results
-
-This state enables the system to resume processing after failures, generate audit logs, and provide progress reporting.
+Its purpose: give industrial diagnostic teams a systematic, auditable, rule-based workflow for building high-quality, contrastive labeled datasets from historical time-series data.
