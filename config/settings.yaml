@@ -1,0 +1,79 @@
+# Oil-Well Labeling Framework — configuration
+# All values can be overridden by environment variables.
+
+llm:
+  provider: mistral                          # "mistral" | "anthropic"
+  model: mistral-nemo
+  api_base: https://api.mistral.ai/v1
+  timeout_sec: 30
+  max_tokens_discovery: 900
+  max_tokens_fact_extraction: 600
+  max_tokens_explanation: 400
+  max_tokens_rule_draft: 800
+  temperature: 0.1
+
+signal:
+  # Values outside [min, max] are clamped
+  value_min: -1000.0
+  value_max: 100000.0
+  # Fraction of values that must be valid after sanitization
+  data_quality_min_valid: 0.5
+  # Consecutive near-zero values longer than this are a dropout span
+  dropout_threshold: 0.01
+  min_dropout_duration_s: 300
+  # Gaps shorter than this are interpolated (seconds)
+  max_interpolation_gap_s: 600
+
+profiling:
+  pelt_model: rbf
+  pelt_penalty_multiplier: 3.0    # penalty = signal_std * multiplier
+  pelt_min_segment_size: 8        # minimum points per segment
+  regime_cluster_k_max: 6         # max k for k-means regime clustering
+  regime_cluster_k_min: 2
+  max_profile_age_days: 90        # WellProfile is stale after this
+
+thresholds:
+  # CandidateEventDetector
+  novel_regime_min_novelty: 0.0   # min deviation score to flag as candidate
+  atypical_amplitude_z: 2.5       # z-score threshold
+  unusual_duration_p_low: 0.1     # p10 boundary
+  unusual_duration_p_high: 0.9    # p90 boundary
+  # Statistical shift detection (UI)
+  default_statistical_threshold_pct: 30.0
+
+retrieval:
+  chroma_collection: oil_well_labeling
+  chroma_persist_dir: data/chroma
+  semantic_top_k: 5
+  semantic_min_similarity: 0.5
+  maintenance_window_days_before: 3
+  maintenance_window_days_after: 1
+
+timeouts:
+  input_normalization: 10
+  signal_sanitization: 15
+  global_series_profiling: 30
+  historical_profile_build: 10
+  candidate_event_detection: 10
+  local_segment_analysis: 10
+  context_fact_extraction: 40
+  rule_engine: 5
+  asset_total: 180
+  candidate_total: 90
+
+retries:
+  context_fact_extraction: 2
+  global_series_profiling: 1
+
+paths:
+  tasks_dir: data/tasks
+  runs_dir: runs
+  knowledge_base_dir: data/knowledge_base
+  baselines_dir: data/baselines
+  outputs_dir: data/outputs
+  review_labels_dir: data/review_labels
+
+example_store:
+  embedding_model: all-MiniLM-L6-v2
+  top_k_similar: 5
+  min_similarity: 0.6

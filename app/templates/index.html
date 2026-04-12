@@ -1,0 +1,2164 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Oil Well Labeling UI</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+      :root {
+        --bg: #f5efe3;
+        --panel: rgba(255, 251, 245, 0.92);
+        --panel-strong: rgba(255, 255, 255, 0.78);
+        --ink: #1d2a33;
+        --muted: #677680;
+        --line: rgba(29, 42, 51, 0.14);
+        --accent: #0d7c66;
+        --accent-soft: rgba(13, 124, 102, 0.12);
+        --warn: #d95d39;
+        --warn-soft: rgba(217, 93, 57, 0.14);
+        --shadow: 0 18px 48px rgba(29, 42, 51, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(217, 93, 57, 0.14), transparent 28%),
+          radial-gradient(circle at top right, rgba(13, 124, 102, 0.18), transparent 24%),
+          linear-gradient(180deg, #f7f1e7 0%, #ece6db 100%);
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      .shell {
+        max-width: 1460px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 18px;
+        margin-bottom: 20px;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(2rem, 3vw, 3.2rem);
+        line-height: 0.96;
+        letter-spacing: -0.04em;
+      }
+
+      .hero p {
+        margin: 10px 0 0;
+        max-width: 760px;
+        color: var(--muted);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 360px minmax(0, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      .sidebar {
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+
+      .canvas {
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .card {
+        padding: 14px 16px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+      }
+
+      .control-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        align-items: end;
+      }
+
+      .control-grid.secondary {
+        grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr;
+      }
+
+      .control-group {
+        display: grid;
+        gap: 8px;
+      }
+
+      label {
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px 14px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.88);
+      }
+
+      textarea {
+        min-height: 92px;
+        resize: vertical;
+      }
+
+      button {
+        border: 0;
+        border-radius: 14px;
+        padding: 12px 16px;
+        color: #fff;
+        background: var(--accent);
+        cursor: pointer;
+        transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
+      }
+
+      button.secondary {
+        background: var(--warn);
+      }
+
+      button.ghost {
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.84);
+        border: 1px solid var(--line);
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+        transform: none;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .stat {
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .stat span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .stat strong {
+        display: block;
+        margin-top: 2px;
+        font-size: 1.35rem;
+      }
+
+      .hint {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .status {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .mode-strip {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .selection-strip {
+        display: grid;
+        grid-template-columns: 1.3fr minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+      }
+
+      .selection-box {
+        display: grid;
+        gap: 6px;
+      }
+
+      #cursorSlider {
+        width: 100%;
+      }
+
+      #plot {
+        min-height: 780px;
+        overflow: hidden;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background:
+          linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(247,242,234,0.94) 100%);
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .chip {
+        padding: 9px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.84);
+        font-size: 0.9rem;
+      }
+
+      .chat {
+        display: grid;
+        gap: 10px;
+        max-height: 360px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .message {
+        padding: 12px 14px;
+        border-radius: 18px;
+        line-height: 1.45;
+      }
+
+      .message.assistant {
+        background: var(--accent-soft);
+      }
+
+      .message.user {
+        background: var(--warn-soft);
+      }
+
+      .message.system {
+        background: rgba(13, 124, 102, 0.06);
+        border: 1px solid rgba(13, 124, 102, 0.25);
+        color: var(--accent);
+        font-size: 0.85rem;
+        font-style: italic;
+        text-align: center;
+      }
+
+      .mini-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+      }
+
+      .mini-table th,
+      .mini-table td {
+        padding: 8px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+
+      .mini-table th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .mini-table tr.active-row {
+        background: rgba(13, 124, 102, 0.08);
+      }
+
+      .mini-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .mini-action {
+        padding: 6px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--ink);
+        font-size: 0.84rem;
+      }
+
+      .mini-action.delete {
+        color: #9f4027;
+      }
+
+      .candidate-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .candidate-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 10px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.84);
+        min-width: 0;
+      }
+      .candidate-item-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      .candidate-item.active {
+        border-color: rgba(13, 124, 102, 0.44);
+        background: rgba(13, 124, 102, 0.09);
+      }
+
+      .candidate-meta {
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .stats-panel {
+        display: grid;
+        gap: 12px;
+      }
+
+      .stats-note {
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .stats-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .stats-block {
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.84);
+      }
+
+      .stats-block strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .stats-cell {
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: rgba(247, 242, 234, 0.9);
+      }
+
+      .stats-cell span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .stats-cell strong {
+        margin: 2px 0 0;
+        font-size: 0.95rem;
+      }
+
+      /* compact status bar (chips + status in one row) */
+      .status-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+      }
+
+      .status-bar .status {
+        margin-left: auto;
+        font-size: 0.88rem;
+      }
+
+      /* plot + right candidates panel */
+      .plot-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 270px;
+        gap: 14px;
+        align-items: start;
+      }
+
+      .plot-main {
+        display: grid;
+        gap: 8px;
+      }
+
+      /* compact cursor row */
+      .cursor-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+      }
+
+      .cursor-row input[type=range] {
+        flex: 1;
+        border: none;
+        border-radius: 0;
+        padding: 0;
+        background: transparent;
+      }
+
+      .cursor-row .status {
+        white-space: nowrap;
+        font-size: 0.86rem;
+        color: var(--muted);
+        min-width: 140px;
+        text-align: right;
+      }
+
+      /* selection state — one compact line */
+      .selection-compact {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        font-size: 0.88rem;
+        color: var(--muted);
+        padding: 0 2px;
+      }
+
+      .selection-compact .status {
+        font-size: 0.88rem;
+      }
+
+      /* right candidates panel */
+      .candidates-panel {
+        display: grid;
+        gap: 8px;
+        align-content: start;
+        padding: 12px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        max-height: 900px;
+        overflow-y: auto;
+        min-width: 0;
+      }
+
+      .candidates-panel .hint {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      /* compact action bar */
+      .action-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+      }
+
+      .action-bar select,
+      .action-bar input[type=text] {
+        border-radius: 10px;
+        padding: 7px 10px;
+        font-size: 0.88rem;
+        width: auto;
+        min-width: 140px;
+        max-width: 180px;
+      }
+
+      .action-bar button {
+        padding: 8px 12px;
+        border-radius: 10px;
+        font-size: 0.86rem;
+        white-space: nowrap;
+      }
+
+      .action-bar .action-sep {
+        width: 1px;
+        height: 24px;
+        background: var(--line);
+        flex-shrink: 0;
+      }
+
+      .action-bar .editing-status {
+        font-size: 0.84rem;
+        color: var(--muted);
+        margin-left: auto;
+      }
+
+      @media (max-width: 1180px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .plot-layout {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 860px) {
+        .control-grid,
+        .control-grid.secondary {
+          grid-template-columns: 1fr;
+        }
+
+        .stats,
+        .stats-metrics,
+        .stats-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .cursor-row .status {
+          min-width: 80px;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .shell {
+          padding: 16px;
+        }
+
+        .hero {
+          flex-direction: column;
+          align-items: stretch;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <div>
+          <h1>Labeling Review Surface</h1>
+          <p>Импортируйте файл, уточните ряды и критерии отклонений в discovery-диалоге, затем размечайте на review-surface: сверху детальные панели, снизу overview по времени, выбор разметки через устойчивый курсор по оси X.</p>
+        </div>
+        <div class="panel" style="padding: 14px 16px;">
+          <div class="hint">LLM</div>
+          <div><strong>Mistral / {{ mistral_model }}</strong></div>
+          <div class="status">{% if mistral_configured %}Ключ найден в `.env`{% else %}Добавьте ключ в `.env` по шаблону `.env.example`{% endif %}</div>
+        </div>
+      </section>
+
+      <div class="layout">
+        <aside class="panel sidebar">
+          <div class="control-group">
+            <label for="fileInput">Файл CSV/XLSX</label>
+            <input id="fileInput" type="file" accept=".csv,.xlsx,.xls">
+            <button id="uploadBtn">Импортировать</button>
+          </div>
+
+          <div class="stats">
+            <div class="stat">
+              <span>Строк</span>
+              <strong id="rowStat">0</strong>
+            </div>
+            <div class="stat">
+              <span>Рядов</span>
+              <strong id="seriesStat">0</strong>
+            </div>
+            <div class="stat">
+              <span>Скважин</span>
+              <strong id="wellStat">0</strong>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label for="seriesSelect">Ряды для графика</label>
+            <select id="seriesSelect" multiple size="7"></select>
+          </div>
+
+          <div class="control-group">
+            <label for="chatInput">Сообщение discovery-ассистенту</label>
+            <textarea id="chatInput" placeholder="Например: показывай Активная мощность и Входное напряжение, ищи резкие провалы и зоны нестабильности, окно 20 минут."></textarea>
+            <button id="chatBtn">Отправить</button>
+          </div>
+
+          <div class="card">
+            <div class="hint">Диалог</div>
+            <div class="chat" id="chatBox"></div>
+          </div>
+        </aside>
+
+        <main class="panel canvas">
+          <div class="card">
+            <div class="control-grid">
+              <div class="control-group">
+                <label for="timeColumn">Колонка времени</label>
+                <select id="timeColumn"></select>
+              </div>
+              <div class="control-group">
+                <label for="wellColumn">Колонка скважины</label>
+                <select id="wellColumn"></select>
+              </div>
+              <div class="control-group">
+                <label for="wellValue">Лист / скважина</label>
+                <select id="wellValue"></select>
+              </div>
+              <div class="control-group">
+                <label for="windowSize">Размер окна</label>
+                <input id="windowSize" type="number" min="1" step="1" placeholder="например 240">
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="control-grid secondary">
+              <div class="control-group">
+                <label for="dateFrom">Дата от</label>
+                <input id="dateFrom" type="datetime-local">
+              </div>
+              <div class="control-group">
+                <label for="dateTo">Дата до</label>
+                <input id="dateTo" type="datetime-local">
+              </div>
+              <div class="control-group">
+                <label for="statisticalThresholdPct">Порог статистики, %</label>
+                <input id="statisticalThresholdPct" type="number" min="1" step="1" placeholder="например 30">
+              </div>
+              <div class="control-group">
+                <label for="recommendationMode">Режим разметки</label>
+                <select id="recommendationMode">
+                  <option value="point">Точка</option>
+                  <option value="interval">Интервал</option>
+                </select>
+              </div>
+              <div class="control-group">
+                <label>&nbsp;</label>
+                <button id="refreshPlotBtn" class="ghost">Обновить график</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- compact status bar -->
+          <div class="status-bar">
+            <div class="chip" id="reviewModeChip">Режим: точка</div>
+            <div class="chip" id="reviewWindowChip">Окно: 20</div>
+            <div class="chip" id="activeWellChip" style="display:none"></div>
+            <div class="chip" id="activeDateChip" style="display:none"></div>
+            <div class="status" id="surfaceStatus">Загрузите файл и выберите ряд.</div>
+            <div id="plotUpdateBanner" style="display:none; margin-left:auto; font-size:0.82rem; color:var(--accent); font-weight:600;"></div>
+          </div>
+
+          <!-- plot + candidates side by side -->
+          <div class="plot-layout">
+            <div class="plot-main">
+              <div id="plot"></div>
+
+              <!-- compact cursor row -->
+              <div class="cursor-row">
+                <input id="cursorSlider" type="range" min="0" max="0" step="1" value="0" disabled>
+                <span id="cursorValue" class="status">—</span>
+              </div>
+
+              <!-- selection state -->
+              <div class="selection-compact">
+                <span id="recommendationStatus" class="status">Точка не выбрана.</span>
+                <span id="recommendationDetails" class="status"></span>
+              </div>
+            </div>
+
+            <!-- narrow right panel: candidates only -->
+            <div class="candidates-panel">
+              <div class="hint">Кандидаты</div>
+              <div id="candidateIntervalsSummary" class="status" style="font-size:0.84rem;">Не построены.</div>
+              <div id="candidateIntervalsList" class="candidate-list"></div>
+            </div>
+          </div>
+
+          <!-- stats row below plot+panel -->
+          <div id="statsRow" style="display:none; padding: 10px 14px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel-strong); font-size: 0.88rem;">
+            <span class="hint" style="margin-right:8px;">Статистика:</span>
+            <span id="candidateStatsSummary" class="status">—</span>
+            <div id="candidateStatsDetail" style="margin-top:4px;"></div>
+          </div>
+
+          <!-- compact action bar: label + buttons in one row -->
+          <div class="action-bar">
+            <select id="labelSelect">
+              <option value="">— метка —</option>
+              <option value="candidate_deviation">candidate_deviation ✓</option>
+              <option value="belt_break">belt_break</option>
+              <option value="planned_stop">planned_stop</option>
+              <option value="planned_maintenance">planned_maintenance</option>
+              <option value="sensor_issue">sensor_issue</option>
+              <option value="stable_unusual_regime">stable_unusual_regime</option>
+              <option value="unknown">unknown</option>
+            </select>
+            <input id="correctionReason" type="text" placeholder="причина отклонения или коррекции">
+            <div class="action-sep"></div>
+            <button id="confirmPointBtn">Точка ✓</button>
+            <button id="confirmIntervalBtn">Интервал ✓</button>
+            <button id="undoSelectionBtn" class="secondary">Отменить</button>
+            <button id="resetXRangeBtn" class="ghost">Весь X</button>
+            <button id="resetRecommendationBtn" class="ghost">Сброс</button>
+            <div class="action-sep"></div>
+            <button id="clearEditingBtn" class="ghost">Снять ред.</button>
+            <span class="editing-status" id="editingStatus">Новая запись.</span>
+          </div>
+
+          <div class="card" id="learningPanel" style="display:none">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span class="hint">Агент учится</span>
+              <span id="learningBadge" style="font-size:0.85rem;color:var(--muted)"></span>
+            </div>
+            <div id="learningPatterns" style="margin-top:8px;font-size:0.88rem;"></div>
+            <div id="learningDrafts" style="margin-top:8px;font-size:0.88rem;"></div>
+          </div>
+
+          <div class="card">
+            <div class="hint">Сохранённая разметка по текущей скважине</div>
+            <div id="annotationsPath" class="status"></div>
+            <table class="mini-table">
+              <thead>
+                <tr>
+                  <th>Время</th>
+                  <th>Тип</th>
+                  <th>Метка</th>
+                  <th>Причина / комментарий</th>
+                  <th>Координаты</th>
+                  <th>Ряд</th>
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody id="annotationsTableBody">
+                <tr><td colspan="6">Пока нет сохранённых разметок.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      let sessionId = null;
+      let currentProfile = null;
+      let latestPlotPayload = null;
+      let latestWindowSize = 20;
+      let latestRecommendationMode = "point";
+      let suggestedRecommendation = null;
+      let currentRecommendation = null;
+      let pendingRecommendation = null;
+      let currentViewport = null;
+      let lastAutoFocusKey = null;
+      let lastDateFilterForZoom = null;
+      let latestAnnotations = [];
+      let editingAnnotationId = null;
+      let latestCandidateIntervals = [];
+      let latestCandidateIntervalStats = [];
+      let activeCandidateIndex = null;
+      let isChatPending = false;
+      let latestPlotWarning = null;
+      let latestTaskSpecLabelTaxonomy = [];
+
+      const fileInput = document.getElementById("fileInput");
+      const uploadBtn = document.getElementById("uploadBtn");
+      const seriesSelect = document.getElementById("seriesSelect");
+      const chatInput = document.getElementById("chatInput");
+      const chatBtn = document.getElementById("chatBtn");
+      const chatBox = document.getElementById("chatBox");
+      const timeColumn = document.getElementById("timeColumn");
+      const wellColumn = document.getElementById("wellColumn");
+      const wellValue = document.getElementById("wellValue");
+      const windowSize = document.getElementById("windowSize");
+      const dateFrom = document.getElementById("dateFrom");
+      const dateTo = document.getElementById("dateTo");
+      const statisticalThresholdPct = document.getElementById("statisticalThresholdPct");
+      const recommendationMode = document.getElementById("recommendationMode");
+      const refreshPlotBtn = document.getElementById("refreshPlotBtn");
+      const confirmPointBtn = document.getElementById("confirmPointBtn");
+      const confirmIntervalBtn = document.getElementById("confirmIntervalBtn");
+      const undoSelectionBtn = document.getElementById("undoSelectionBtn");
+      const resetXRangeBtn = document.getElementById("resetXRangeBtn");
+      const resetRecommendationBtn = document.getElementById("resetRecommendationBtn");
+      const rowStat = document.getElementById("rowStat");
+      const seriesStat = document.getElementById("seriesStat");
+      const wellStat = document.getElementById("wellStat");
+      const reviewModeChip = document.getElementById("reviewModeChip");
+      const reviewWindowChip = document.getElementById("reviewWindowChip");
+      const surfaceStatus = document.getElementById("surfaceStatus");
+      const activeWellChip = document.getElementById("activeWellChip");
+      const activeDateChip = document.getElementById("activeDateChip");
+      const plotUpdateBanner = document.getElementById("plotUpdateBanner");
+
+      function updateActiveFilterChips(stateData) {
+        if (stateData?.selected_well_value) {
+          activeWellChip.textContent = `Скв: ${stateData.selected_well_value}`;
+          activeWellChip.style.display = "";
+        }
+        const df = stateData?.date_from;
+        const dt = stateData?.date_to;
+        if (df || dt) {
+          const fmt = s => s ? s.slice(0,10) : "?";
+          activeDateChip.textContent = `${fmt(df)} … ${fmt(dt)}`;
+          activeDateChip.style.display = "";
+        }
+      }
+
+      let _bannerTimer = null;
+      function flashPlotBanner(text) {
+        plotUpdateBanner.textContent = text;
+        plotUpdateBanner.style.display = "";
+        if (_bannerTimer) clearTimeout(_bannerTimer);
+        _bannerTimer = setTimeout(() => { plotUpdateBanner.style.display = "none"; }, 4000);
+      }
+      const cursorSlider = document.getElementById("cursorSlider");
+      const cursorValue = document.getElementById("cursorValue");
+      const recommendationStatus = document.getElementById("recommendationStatus");
+      const recommendationDetails = document.getElementById("recommendationDetails");
+      const annotationsPath = document.getElementById("annotationsPath");
+      const labelSelect = document.getElementById("labelSelect");
+      const correctionReason = document.getElementById("correctionReason");
+      const annotationsTableBody = document.getElementById("annotationsTableBody");
+      const editingStatus = document.getElementById("editingStatus");
+      const clearEditingBtn = document.getElementById("clearEditingBtn");
+      const candidateIntervalsSummary = document.getElementById("candidateIntervalsSummary");
+      const candidateIntervalsList = document.getElementById("candidateIntervalsList");
+      const candidateStatsSummary = document.getElementById("candidateStatsSummary");
+      const candidateStatsDetail = document.getElementById("candidateStatsDetail");
+
+      function getSelectedSeries() {
+        return Array.from(seriesSelect.selectedOptions).map(option => option.value);
+      }
+
+      function appendMessage(role, content) {
+        const node = document.createElement("div");
+        node.className = `message ${role}`;
+        node.textContent = content;
+        chatBox.appendChild(node);
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      function detailText(detail, fallback) {
+        if (!detail) return fallback;
+        if (typeof detail === "string") return detail;
+        if (Array.isArray(detail)) {
+          return detail.map(item => item.msg || item.message || JSON.stringify(item)).join("; ");
+        }
+        return JSON.stringify(detail);
+      }
+
+      function fillSingleSelect(selectNode, values, selectedValue = "", allowEmpty = true, emptyLabel = "Не выбрано") {
+        const normalized = Array.from(new Set((values || []).map(value => String(value))));
+        const fallback = selectedValue && normalized.includes(String(selectedValue))
+          ? String(selectedValue)
+          : "";
+
+        selectNode.innerHTML = "";
+        if (allowEmpty) {
+          const emptyOption = document.createElement("option");
+          emptyOption.value = "";
+          emptyOption.textContent = emptyLabel;
+          selectNode.appendChild(emptyOption);
+        }
+
+        normalized.forEach(value => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = value;
+          option.selected = value === fallback;
+          selectNode.appendChild(option);
+        });
+
+        if (fallback) {
+          selectNode.value = fallback;
+        } else if (!allowEmpty && normalized.length) {
+          selectNode.value = normalized[0];
+        } else {
+          selectNode.value = "";
+        }
+      }
+
+      function fillMultiSelect(selectNode, values, selectedValues = []) {
+        const chosen = new Set((selectedValues || []).map(value => String(value)));
+        selectNode.innerHTML = "";
+        (values || []).forEach(value => {
+          const option = document.createElement("option");
+          option.value = String(value);
+          option.textContent = String(value);
+          option.selected = chosen.has(String(value));
+          selectNode.appendChild(option);
+        });
+      }
+
+      function formatDatetimeLocal(value) {
+        if (!value) return "";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "";
+        const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+        return shifted.toISOString().slice(0, 16);
+      }
+
+      function formatNumber(value) {
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return "n/a";
+        return Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 4 });
+      }
+
+      function formatMode(mode) {
+        return mode === "interval" ? "интервал" : "точка";
+      }
+
+      function formatPercent(value) {
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return "n/a";
+        return `${(Number(value) * 100).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`;
+      }
+
+      function getVisibleSeries(plot) {
+        return (plot?.traces || []).slice(0, 2);
+      }
+
+      function getPrimaryTrace(plot) {
+        return getVisibleSeries(plot)[0] || null;
+      }
+
+      function findNearestIndex(xValues, targetX) {
+        if (!Array.isArray(xValues) || !xValues.length) return 0;
+        const exactIndex = xValues.findIndex(item => String(item) === String(targetX));
+        if (exactIndex >= 0) return exactIndex;
+
+        const targetTime = new Date(targetX).getTime();
+        if (!Number.isNaN(targetTime)) {
+          let nearestIndex = 0;
+          let nearestDiff = Infinity;
+          xValues.forEach((value, index) => {
+            const candidate = new Date(value).getTime();
+            if (Number.isNaN(candidate)) return;
+            const diff = Math.abs(candidate - targetTime);
+            if (diff < nearestDiff) {
+              nearestDiff = diff;
+              nearestIndex = index;
+            }
+          });
+          return nearestIndex;
+        }
+
+        return 0;
+      }
+
+      function getWindowBounds(xValues, centerX, activeWindowSize) {
+        if (!xValues?.length || !centerX) return null;
+        const centerIndex = findNearestIndex(xValues, centerX);
+        const half = Math.max(Math.floor(Number(activeWindowSize || 20) / 2), 1);
+        return {
+          start: xValues[Math.max(centerIndex - half, 0)],
+          end: xValues[Math.min(centerIndex + half, xValues.length - 1)],
+          centerIndex
+        };
+      }
+
+      function buildRecommendationKey(recommendation) {
+        if (!recommendation || !recommendation.x) return "empty";
+        return [
+          recommendation.mode,
+          recommendation.x,
+          recommendation.x_end || "",
+          recommendation.trace_name || "",
+          recommendation.locked ? "locked" : "pending"
+        ].join("|");
+      }
+
+      function getDisplayedRecommendation() {
+        return pendingRecommendation || currentRecommendation || suggestedRecommendation || null;
+      }
+
+      function buildPendingFromIndex(index) {
+        const primaryTrace = getPrimaryTrace(latestPlotPayload);
+        if (!primaryTrace || !primaryTrace.x.length) return null;
+
+        const safeIndex = Math.max(0, Math.min(Number(index) || 0, primaryTrace.x.length - 1));
+        const centerX = primaryTrace.x[safeIndex];
+        const centerY = primaryTrace.y[safeIndex];
+        const bounds = getWindowBounds(primaryTrace.x, centerX, latestWindowSize);
+
+        if (latestRecommendationMode === "interval") {
+          return {
+            mode: "interval",
+            x: bounds?.start || centerX,
+            x_end: bounds?.end || centerX,
+            y: centerY,
+            trace_name: primaryTrace.name,
+            locked: false
+          };
+        }
+
+        return {
+          mode: "point",
+          x: centerX,
+          x_end: null,
+          y: centerY,
+          trace_name: primaryTrace.name,
+          locked: false
+        };
+      }
+
+      function selectionCoords(recommendation) {
+        if (!recommendation || !recommendation.x) return "нет выбора";
+        if (recommendation.mode === "interval") {
+          return `${recommendation.x} .. ${recommendation.x_end || recommendation.x}`;
+        }
+        return `${recommendation.x}, y=${formatNumber(recommendation.y)}`;
+      }
+
+      function buildSelectionText(recommendation) {
+        if (!recommendation || !recommendation.x) return "Пока ничего не выбрано.";
+        const state = recommendation.locked ? "Зафиксировано" : "Выбрано";
+        return `${state}: ${selectionCoords(recommendation)}`;
+      }
+
+      function updateAnnotationsTable(items = [], path = "") {
+        latestAnnotations = items;
+        if (editingAnnotationId && !items.some(item => item.annotation_id === editingAnnotationId)) {
+          editingAnnotationId = null;
+        }
+        annotationsPath.textContent = path ? `Файл разметки: ${path}` : "";
+        if (!items.length) {
+          annotationsTableBody.innerHTML = '<tr><td colspan="7">Пока нет сохранённых разметок.</td></tr>';
+          return;
+        }
+
+        annotationsTableBody.innerHTML = items.map(item => {
+          const coords = item.recommendation_mode === "interval"
+            ? `${item.x || ""} .. ${item.x_end || ""}`
+            : `${item.x || ""}${item.y !== null && item.y !== undefined ? `, y=${formatNumber(item.y)}` : ""}`;
+          const activeClass = item.annotation_id === editingAnnotationId ? "active-row" : "";
+          const labelText = item.label
+            ? `<span style="font-weight:600;color:var(--accent)">${item.label}</span>`
+            : `<span style="color:var(--muted)">—</span>`;
+          const reasonText = item.correction_reason
+            ? `<span style="color:var(--muted);font-size:0.85em">${item.correction_reason}</span>`
+            : "";
+          return `<tr class="${activeClass}">
+            <td>${item.created_at ? item.created_at.slice(0, 19).replace("T", " ") : ""}</td>
+            <td>${item.recommendation_mode === "interval" ? "Интервал" : "Точка"}</td>
+            <td>${labelText}</td>
+            <td>${reasonText}</td>
+            <td>${coords}</td>
+            <td>${item.trace_name || item.series?.[0] || ""}</td>
+            <td>
+              <div class="mini-actions">
+                <button class="mini-action" data-action="edit" data-id="${item.annotation_id}">Открыть</button>
+                <button class="mini-action delete" data-action="delete" data-id="${item.annotation_id}">Удалить</button>
+              </div>
+            </td>
+          </tr>`;
+        }).join("");
+      }
+
+      function getActiveCandidateStats() {
+        if (!latestCandidateIntervalStats.length) return null;
+        const preferredIndex = activeCandidateIndex ?? 0;
+        return latestCandidateIntervalStats.find(item => Number(item.candidate_index) === Number(preferredIndex))
+          || latestCandidateIntervalStats[0]
+          || null;
+      }
+
+      function renderStatsCells(title, stats) {
+        if (!stats || !Object.keys(stats).length) {
+          return `<div class="stats-block"><strong>${title}</strong><div class="stats-note">Недостаточно данных.</div></div>`;
+        }
+        return `
+          <div class="stats-block">
+            <strong>${title}</strong>
+            <div class="stats-grid">
+              <div class="stats-cell"><span>mean</span><strong>${formatNumber(stats.mean)}</strong></div>
+              <div class="stats-cell"><span>median</span><strong>${formatNumber(stats.median)}</strong></div>
+              <div class="stats-cell"><span>std</span><strong>${formatNumber(stats.std)}</strong></div>
+              <div class="stats-cell"><span>variance</span><strong>${formatNumber(stats.variance)}</strong></div>
+              <div class="stats-cell"><span>range</span><strong>${formatNumber(stats.range)}</strong></div>
+            </div>
+            <div class="stats-note" style="margin-top: 8px;">
+              raw=${stats.count_raw ?? "n/a"}, clean=${stats.count_clean ?? "n/a"}, выбросов удалено=${stats.outliers_removed ?? "n/a"}
+            </div>
+          </div>
+        `;
+      }
+
+      const statsRow = document.getElementById("statsRow");
+
+      function updateCandidateStats() {
+        const activeStats = getActiveCandidateStats();
+        if (!activeStats) {
+          candidateStatsSummary.textContent = "—";
+          candidateStatsDetail.innerHTML = "";
+          statsRow.style.display = "none";
+          return;
+        }
+        statsRow.style.display = "";
+
+        const stats = activeStats.stats || {};
+        const assessment = stats.assessment || {};
+        const comparison = stats.comparison || {};
+        const ruptures = stats.ruptures || {};
+        const changePoints = Array.isArray(ruptures.change_points) ? ruptures.change_points.length : 0;
+
+        candidateStatsSummary.textContent = assessment.summary || "Статистическая оценка рассчитана.";
+        candidateStatsDetail.innerHTML = `
+          <div class="stats-note">
+            Baseline: сутки ${stats.reference_day || "n/a"}.
+            Focus: ${stats.window_start || "n/a"} .. ${stats.window_end || "n/a"}.
+            Длительность окна: ${formatNumber(stats.focus_duration_hours)} ч.
+            Метод: ${assessment.preferred_method || "statistics"}.
+          </div>
+          <div class="stats-metrics">
+            ${renderStatsCells("Суточный baseline", stats.reference_stats)}
+            ${renderStatsCells("Фокусное окно", stats.focus_stats)}
+          </div>
+          <div class="stats-block">
+            <strong>Сравнение baseline vs focus</strong>
+            <div class="stats-grid">
+              <div class="stats-cell"><span>delta mean</span><strong>${formatNumber(comparison.delta_mean)}</strong></div>
+              <div class="stats-cell"><span>delta median</span><strong>${formatNumber(comparison.delta_median)}</strong></div>
+              <div class="stats-cell"><span>delta std</span><strong>${formatNumber(comparison.delta_std)}</strong></div>
+              <div class="stats-cell"><span>delta variance</span><strong>${formatNumber(comparison.delta_variance)}</strong></div>
+              <div class="stats-cell"><span>delta range</span><strong>${formatNumber(comparison.delta_range)}</strong></div>
+            </div>
+            <div class="stats-note" style="margin-top: 8px;">
+              rel mean=${formatPercent(comparison.relative_delta_mean)},
+              rel median=${formatPercent(comparison.relative_delta_median)},
+              rel std=${formatPercent(comparison.relative_delta_std)},
+              rel range=${formatPercent(comparison.relative_delta_range)}
+            </div>
+          </div>
+          <div class="stats-note">
+            material_change=${assessment.material_change ? "yes" : "no"},
+            central_shift=${assessment.central_shift ? "yes" : "no"},
+            spread_shift=${assessment.spread_shift ? "yes" : "no"}.
+            ruptures: ${ruptures.available ? `доступен, change-points=${changePoints}` : `недоступен (${ruptures.error || "unknown"})`}.
+          </div>
+        `;
+      }
+
+      function getFilteredCandidates() {
+        const df = dateFrom.value ? new Date(dateFrom.value).getTime() : null;
+        const dt = dateTo.value ? new Date(dateTo.value).getTime() : null;
+        const withIdx = latestCandidateIntervals.map((item, i) => ({ ...item, _origIdx: i }));
+        if (!df && !dt) return withIdx;
+        return withIdx.filter(item => {
+          const s = item.start ? new Date(item.start).getTime() : null;
+          const e = item.end ? new Date(item.end).getTime() : s;
+          if (!s) return true;
+          if (dt && s > dt) return false;
+          if (df && (e ?? s) < df) return false;
+          return true;
+        });
+      }
+
+      function updateCandidateIntervals(items = [], stats = []) {
+        latestCandidateIntervals = items || [];
+        latestCandidateIntervalStats = stats || [];
+
+        const displayItems = getFilteredCandidates();
+
+        if (!displayItems.length) {
+          activeCandidateIndex = null;
+          const total = latestCandidateIntervals.length;
+          candidateIntervalsSummary.textContent = total > 0
+            ? `${total} кандидат(ов) найдено, но вне выбранного диапазона дат.`
+            : "Кандидаты не найдены для текущего фильтра или типа отклонения.";
+          candidateIntervalsList.innerHTML = "";
+          updateCandidateStats();
+          return;
+        }
+
+        if (activeCandidateIndex === null || !latestCandidateIntervals[activeCandidateIndex]) {
+          activeCandidateIndex = displayItems[0]._origIdx;
+        }
+
+        const isFiltered = displayItems.length < latestCandidateIntervals.length;
+        candidateIntervalsSummary.textContent = isFiltered
+          ? `Показано ${displayItems.length} из ${latestCandidateIntervals.length} кандидат(ов).`
+          : `Найдено candidate intervals: ${latestCandidateIntervals.length}.`;
+
+        candidateIntervalsList.innerHTML = displayItems.map(item => `
+          <div class="candidate-item ${item._origIdx === activeCandidateIndex ? "active" : ""}">
+            <div class="candidate-item-row">
+              <strong>#${item._origIdx + 1}</strong>
+              <button class="mini-action" data-candidate-index="${item._origIdx}">Открыть</button>
+            </div>
+            <div class="candidate-meta">score ${item.score} · ${item.reason || "amplitude_change"}</div>
+          </div>
+        `).join("");
+        updateCandidateStats();
+      }
+
+      const learningPanel = document.getElementById("learningPanel");
+      const learningBadge = document.getElementById("learningBadge");
+      const learningPatterns = document.getElementById("learningPatterns");
+      const learningDrafts = document.getElementById("learningDrafts");
+
+      async function refreshLearning() {
+        if (!sessionId) return;
+        try {
+          const response = await fetch(`/api/learn/${sessionId}`);
+          if (!response.ok) return;
+          const data = await response.json();
+          const total = data.n_total || 0;
+          if (total === 0) { learningPanel.style.display = "none"; return; }
+
+          learningPanel.style.display = "";
+          const corrected = data.n_corrections || 0;
+          const confirmed = data.n_confirmed || 0;
+          learningBadge.textContent =
+            `Размечено: ${total} (подтверждено: ${confirmed}, скорректировано: ${corrected})`;
+
+          if (data.patterns && data.patterns.length) {
+            learningPatterns.innerHTML =
+              `<strong>Паттерны коррекций:</strong><ul style="margin:4px 0 0 16px;padding:0">` +
+              data.patterns.map(p => {
+                const reasons = (p.correction_reasons || []).slice(0, 2).join("; ");
+                return `<li><em>${p.rule_suggested}</em> → <strong>${p.engineer_label}</strong>`
+                  + ` · ${p.count} раз${reasons ? ` · <span style="color:var(--muted)">${reasons}</span>` : ""}</li>`;
+              }).join("") + `</ul>`;
+          } else {
+            learningPatterns.innerHTML = "";
+          }
+
+          if (data.rule_drafts && data.rule_drafts.length) {
+            learningDrafts.innerHTML =
+              `<strong>Предложения по правилам:</strong><ul style="margin:4px 0 0 16px;padding:0">` +
+              data.rule_drafts.map(d =>
+                `<li><em>${d.rule_id}</em> (приоритет ${d.priority}): ${d.description}`
+                + (d.rationale ? ` — <span style="color:var(--muted)">${d.rationale}</span>` : "")
+                + `</li>`
+              ).join("") + `</ul>`;
+          } else {
+            learningDrafts.innerHTML = "";
+          }
+        } catch (_) {}
+      }
+
+      async function refreshAnnotations() {
+        if (!sessionId) return;
+        const params = new URLSearchParams();
+        if (wellValue.value) params.set("well_value", wellValue.value);
+
+        const response = await fetch(`/api/annotations/${sessionId}?${params.toString()}`);
+        const data = await response.json();
+        if (!response.ok) return;
+        updateAnnotationsTable(data.annotations || [], data.annotations_path || "");
+      }
+
+      function updateCursorControl(plot, activeRecommendation) {
+        const primaryTrace = getPrimaryTrace(plot);
+        if (!primaryTrace || !primaryTrace.x.length) {
+          cursorSlider.disabled = true;
+          cursorSlider.min = 0;
+          cursorSlider.max = 0;
+          cursorSlider.value = 0;
+          cursorValue.textContent = "Курсор не активен.";
+          return;
+        }
+
+        const referenceX = activeRecommendation?.x || primaryTrace.x[0];
+        const index = findNearestIndex(primaryTrace.x, referenceX);
+        cursorSlider.disabled = false;
+        cursorSlider.min = 0;
+        cursorSlider.max = Math.max(primaryTrace.x.length - 1, 0);
+        cursorSlider.value = index;
+        cursorValue.textContent = `Позиция ${index + 1} из ${primaryTrace.x.length}: ${primaryTrace.x[index]}`;
+      }
+
+      function updateStatus() {
+        const displayed = getDisplayedRecommendation();
+        reviewModeChip.textContent = `Режим: ${formatMode(latestRecommendationMode)}`;
+        reviewWindowChip.textContent = `Окно: ${latestWindowSize || "n/a"}`;
+        editingStatus.textContent = editingAnnotationId
+          ? "Редактирование: следующее подтверждение обновит выбранную сохранённую запись."
+          : "Новая разметка: следующее подтверждение создаст новую запись.";
+        clearEditingBtn.disabled = !editingAnnotationId;
+
+        if (displayed?.mode === "interval" && displayed.x && displayed.x_end) {
+          recommendationStatus.textContent = displayed.locked
+            ? "Интервал зафиксирован."
+            : pendingRecommendation
+              ? "Подготовлен интервал к фиксации."
+              : "Есть предварительный интервал.";
+          recommendationDetails.textContent = buildSelectionText(displayed);
+          surfaceStatus.textContent = pendingRecommendation
+            ? "Нижний overview сохраняет временной контекст, а shaded window показывает активный интервал."
+            : "Интервал виден сразу на детальных панелях и на overview.";
+          return;
+        }
+
+        if (displayed?.mode === "point" && displayed.x) {
+          recommendationStatus.textContent = displayed.locked
+            ? "Точка зафиксирована."
+            : pendingRecommendation
+              ? "Подготовлена точка к фиксации."
+              : "Есть предварительная точка.";
+          recommendationDetails.textContent = buildSelectionText(displayed);
+          surfaceStatus.textContent = pendingRecommendation
+            ? "Окно вокруг точки видно на всей review-surface и не пропадает при смене X-диапазона."
+            : "Можно двигаться по времени курсором и сразу видеть окно рекомендации.";
+          return;
+        }
+
+        recommendationStatus.textContent = "Рекомендационная точка не выбрана.";
+        recommendationDetails.textContent = "Пока ничего не зафиксировано.";
+        surfaceStatus.textContent = "Загрузите файл и выберите ряд.";
+      }
+
+      function buildPointLabel(recommendation) {
+        if (!recommendation || !recommendation.x) return "";
+        return `${recommendation.locked ? "Фикс." : "Выбор"} ${formatNumber(recommendation.y)}`;
+      }
+
+      function buildDetailTraces(plot, activeRecommendation) {
+        const visibleSeries = getVisibleSeries(plot);
+        const traces = [];
+
+        visibleSeries.forEach((trace, index) => {
+          const xAxis = index === 0 ? "x" : "x2";
+          const yAxis = index === 0 ? "y" : "y2";
+          traces.push({
+            x: trace.x,
+            y: trace.y,
+            type: "scatter",
+            mode: "lines",
+            name: trace.name,
+            xaxis: xAxis,
+            yaxis: yAxis,
+            line: {
+              width: 1.9,
+              color: index === 0 ? "#0d7c66" : "#d95d39"
+            },
+            hovertemplate: "%{x}<br>%{y}<extra>" + trace.name + "</extra>"
+          });
+        });
+
+        if (activeRecommendation?.mode === "point" && activeRecommendation.x) {
+          const targetTrace = visibleSeries.find(trace => trace.name === activeRecommendation.trace_name) || visibleSeries[0];
+          const axisIndex = Math.max(visibleSeries.findIndex(trace => trace.name === targetTrace?.name), 0);
+          traces.push({
+            x: [activeRecommendation.x],
+            y: [activeRecommendation.y],
+            type: "scatter",
+            mode: "markers+text",
+            name: "active-selection",
+            xaxis: axisIndex === 1 ? "x2" : "x",
+            yaxis: axisIndex === 1 ? "y2" : "y",
+            hoverinfo: "skip",
+            marker: {
+              color: activeRecommendation.locked ? "#d95d39" : "#0d7c66",
+              size: 15,
+              symbol: "diamond",
+              line: { color: "#ffffff", width: 2 }
+            },
+            text: [buildPointLabel(activeRecommendation)],
+            textposition: "top right",
+            textfont: { size: 12, color: activeRecommendation.locked ? "#b14b2d" : "#0b6553" }
+          });
+        }
+
+        return traces;
+      }
+
+      function buildOverviewTrace(plot) {
+        const primaryTrace = getPrimaryTrace(plot);
+        if (!primaryTrace) return [];
+        return [{
+          x: primaryTrace.x,
+          y: primaryTrace.y,
+          type: "scatter",
+          mode: "lines",
+          name: `${primaryTrace.name} overview`,
+          xaxis: "x3",
+          yaxis: "y3",
+          line: { width: 1.2, color: "rgba(29, 42, 51, 0.72)" },
+          hoverinfo: "skip"
+        }];
+      }
+
+      function buildShapes(activeRecommendation) {
+        const shapes = [];
+
+        latestCandidateIntervals.forEach((item, index) => {
+          const isActive = Number(activeCandidateIndex) === Number(index);
+          shapes.push({
+            type: "rect",
+            xref: "x3",
+            yref: "paper",
+            x0: item.start,
+            x1: item.end,
+            y0: 0,
+            y1: 1,
+            fillcolor: isActive ? "rgba(13, 124, 102, 0.12)" : "rgba(13, 124, 102, 0.07)",
+            line: {
+              color: isActive ? "rgba(13, 124, 102, 0.48)" : "rgba(13, 124, 102, 0.32)",
+              width: isActive ? 1.4 : 1
+            }
+          });
+        });
+
+        if (!activeRecommendation?.x) return shapes;
+        const primaryTrace = getPrimaryTrace(latestPlotPayload);
+        const xValues = primaryTrace?.x || [];
+        const color = activeRecommendation.locked ? "#d95d39" : "#0d7c66";
+        const fill = activeRecommendation.locked ? "rgba(217, 93, 57, 0.16)" : "rgba(13, 124, 102, 0.16)";
+
+        if (activeRecommendation.mode === "interval" && activeRecommendation.x_end) {
+          shapes.push({
+            type: "rect",
+            xref: "x3",
+            yref: "paper",
+            x0: activeRecommendation.x,
+            x1: activeRecommendation.x_end,
+            y0: 0,
+            y1: 1,
+            fillcolor: fill,
+            line: { color, width: 1.4 }
+          });
+          return shapes;
+        }
+
+        const bounds = getWindowBounds(xValues, activeRecommendation.x, latestWindowSize);
+        if (!bounds) return [];
+        shapes.push({
+          type: "rect",
+          xref: "x3",
+          yref: "paper",
+          x0: bounds.start,
+          x1: bounds.end,
+          y0: 0,
+          y1: 1,
+          fillcolor: fill,
+          line: { color, width: 1.3 }
+        });
+        shapes.push({
+          type: "line",
+          xref: "x3",
+          yref: "paper",
+          x0: activeRecommendation.x,
+          x1: activeRecommendation.x,
+          y0: 0,
+          y1: 1,
+          line: { color, width: 2, dash: "dot" }
+        });
+        return shapes;
+      }
+
+      function buildLayout(plot, activeRecommendation) {
+        const visibleSeries = getVisibleSeries(plot);
+        const hasSecondSeries = visibleSeries.length > 1;
+        const primaryTrace = getPrimaryTrace(plot);
+        const xValues = primaryTrace?.x || [];
+        const shapes = buildShapes(activeRecommendation);
+
+        const layout = {
+          margin: { t: 20, r: 18, b: 42, l: 70 },
+          paper_bgcolor: "rgba(0,0,0,0)",
+          plot_bgcolor: "rgba(255,255,255,0.88)",
+          hovermode: "x unified",
+          dragmode: "zoom",
+          showlegend: false,
+          uirevision: "review-surface-v3",
+          shapes,
+          xaxis: {
+            domain: [0, 1],
+            anchor: "y",
+            showgrid: true,
+            gridcolor: "rgba(29,42,51,0.08)",
+            zeroline: false,
+            showticklabels: false,
+            fixedrange: false
+          },
+          yaxis: {
+            domain: hasSecondSeries ? [0.60, 1] : [0.34, 1],
+            title: visibleSeries[0]?.name || "",
+            fixedrange: true,
+            autorange: true,
+            zeroline: false,
+            showgrid: true,
+            gridcolor: "rgba(29,42,51,0.08)"
+          },
+          xaxis3: {
+            domain: [0, 1],
+            anchor: "y3",
+            matches: "x",
+            fixedrange: false,
+            showgrid: true,
+            gridcolor: "rgba(29,42,51,0.08)",
+            zeroline: false,
+            rangeslider: {
+              visible: true,
+              thickness: 0.22,
+              bgcolor: "rgba(244,238,229,0.95)",
+              bordercolor: "rgba(29,42,51,0.12)",
+              borderwidth: 1
+            }
+          },
+          yaxis3: {
+            domain: [0, 0.18],
+            fixedrange: true,
+            autorange: true,
+            showticklabels: false,
+            showgrid: false,
+            zeroline: false
+          }
+        };
+
+        if (hasSecondSeries) {
+          layout.xaxis2 = {
+            domain: [0, 1],
+            anchor: "y2",
+            matches: "x",
+            showgrid: true,
+            gridcolor: "rgba(29,42,51,0.08)",
+            zeroline: false,
+            showticklabels: false,
+            fixedrange: false
+          };
+          layout.yaxis2 = {
+            domain: [0.28, 0.54],
+            title: visibleSeries[1]?.name || "",
+            fixedrange: true,
+            autorange: true,
+            zeroline: false,
+            showgrid: true,
+            gridcolor: "rgba(29,42,51,0.08)"
+          };
+        }
+
+        const recommendationKey = buildRecommendationKey(activeRecommendation);
+        let focusRange = null;
+
+        if (activeRecommendation?.mode === "interval" && activeRecommendation.x && activeRecommendation.x_end) {
+          const t0 = new Date(activeRecommendation.x).getTime();
+          const t1 = new Date(activeRecommendation.x_end).getTime();
+          const pad = Math.max((t1 - t0) * 0.5, 60 * 60 * 1000); // min 1 h padding
+          focusRange = [
+            new Date(t0 - pad).toISOString(),
+            new Date(t1 + pad).toISOString()
+          ];
+        } else if (activeRecommendation?.mode === "point" && activeRecommendation.x) {
+          const bounds = getWindowBounds(xValues, activeRecommendation.x, latestWindowSize);
+          focusRange = bounds ? [bounds.start, bounds.end] : null;
+        }
+
+        if (focusRange && recommendationKey !== lastAutoFocusKey) {
+          currentViewport = focusRange;
+          lastAutoFocusKey = recommendationKey;
+        }
+
+        if (currentViewport) {
+          layout.xaxis.range = currentViewport;
+          layout.xaxis3.range = currentViewport;
+          if (hasSecondSeries) layout.xaxis2.range = currentViewport;
+        }
+
+        return layout;
+      }
+
+      function readViewport(relayoutData) {
+        const start = relayoutData["xaxis.range[0]"] || relayoutData["xaxis2.range[0]"] || relayoutData["xaxis3.range[0]"];
+        const end = relayoutData["xaxis.range[1]"] || relayoutData["xaxis2.range[1]"] || relayoutData["xaxis3.range[1]"];
+        if (start && end) return [start, end];
+
+        if (
+          relayoutData["xaxis.autorange"] ||
+          relayoutData["xaxis2.autorange"] ||
+          relayoutData["xaxis3.autorange"]
+        ) {
+          return null;
+        }
+
+        return currentViewport;
+      }
+
+      function renderPlot() {
+        updateStatus();
+        const plot = latestPlotPayload;
+        const plotNode = document.getElementById("plot");
+        const activeRecommendation = getDisplayedRecommendation();
+
+        confirmPointBtn.disabled = !(pendingRecommendation && pendingRecommendation.mode === "point" && pendingRecommendation.x);
+        confirmIntervalBtn.disabled = !(pendingRecommendation && pendingRecommendation.mode === "interval" && pendingRecommendation.x && pendingRecommendation.x_end);
+        undoSelectionBtn.disabled = !pendingRecommendation;
+
+        if (!plot || !getVisibleSeries(plot).length) {
+          Plotly.purge(plotNode);
+          plotNode.innerHTML = "";
+          updateCursorControl(null, null);
+          updateCandidateIntervals([], []);
+          surfaceStatus.textContent = sessionId ? "Нет данных для выбранных фильтров." : "Загрузите файл и выберите ряд.";
+          return;
+        }
+
+        updateCursorControl(plot, activeRecommendation);
+
+        const data = [
+          ...buildDetailTraces(plot, activeRecommendation),
+          ...buildOverviewTrace(plot)
+        ];
+
+        Plotly.react(plotNode, data, buildLayout(plot, activeRecommendation), {
+          responsive: true,
+          scrollZoom: true,
+          displaylogo: false,
+          modeBarButtonsToRemove: [
+            "lasso2d",
+            "select2d",
+            "autoScale2d",
+            "zoom2d",
+            "pan2d",
+            "zoomIn2d",
+            "zoomOut2d",
+            "hoverClosestCartesian",
+            "hoverCompareCartesian"
+          ]
+        });
+
+        if (typeof plotNode.removeAllListeners === "function") {
+          plotNode.removeAllListeners("plotly_relayout");
+        }
+        plotNode.on("plotly_relayout", eventData => {
+          currentViewport = readViewport(eventData);
+        });
+      }
+
+      function populateProfile(profile, defaults) {
+        currentProfile = profile;
+        rowStat.textContent = profile.rows;
+        seriesStat.textContent = profile.numeric_candidates.length;
+        wellStat.textContent = profile.detected_multiple_wells ? String(profile.unique_well_count || profile.sheet_names?.length || 0) : "1";
+
+        fillSingleSelect(timeColumn, profile.timestamp_candidates, defaults.time_column, true);
+        fillSingleSelect(wellColumn, profile.well_candidates, defaults.well_column, true);
+        fillMultiSelect(seriesSelect, profile.numeric_candidates, defaults.series || []);
+
+        windowSize.value = defaults.window_size || 20;
+        statisticalThresholdPct.value = defaults.statistical_threshold_pct || "";
+        recommendationMode.value = defaults.recommendation_mode || "point";
+        dateFrom.value = formatDatetimeLocal(defaults.date_from);
+        dateTo.value = formatDatetimeLocal(defaults.date_to);
+        reviewModeChip.textContent = `Режим: ${formatMode(recommendationMode.value)}`;
+        reviewWindowChip.textContent = `Окно: ${windowSize.value || "n/a"}`;
+      }
+
+      function resetViewport() {
+        currentViewport = null;
+        lastDateFilterForZoom = null;
+        lastAutoFocusKey = null;
+        renderPlot();
+      }
+
+      function applyCursorSelection(index) {
+        const next = buildPendingFromIndex(index);
+        if (!next) return;
+        pendingRecommendation = next;
+        renderPlot();
+      }
+
+      function updateLabelSelect(taxonomy) {
+        if (!Array.isArray(taxonomy) || !taxonomy.length) return;
+        latestTaskSpecLabelTaxonomy = taxonomy;
+        const currentVal = labelSelect.value;
+        labelSelect.innerHTML = '<option value="">— не задана —</option>';
+        taxonomy.forEach(label => {
+          const opt = document.createElement("option");
+          opt.value = label;
+          opt.textContent = label;
+          labelSelect.appendChild(opt);
+        });
+        if (currentVal && taxonomy.includes(currentVal)) {
+          labelSelect.value = currentVal;
+        }
+      }
+
+      async function uploadFile() {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+        const response = await fetch("/api/upload", { method: "POST", body: formData });
+        const data = await response.json();
+        if (!response.ok) {
+          alert(detailText(data.detail, "Ошибка загрузки"));
+          return;
+        }
+
+        sessionId = data.session_id;
+        currentViewport = null;
+        lastAutoFocusKey = null;
+        pendingRecommendation = null;
+        currentRecommendation = null;
+        suggestedRecommendation = null;
+        latestPlotPayload = null;
+        latestCandidateIntervals = [];
+        latestCandidateIntervalStats = [];
+        activeCandidateIndex = null;
+        chatBox.innerHTML = "";
+
+        populateProfile(data.profile, data.defaults);
+        if (data.task_spec?.label_taxonomy?.length) {
+          updateLabelSelect(data.task_spec.label_taxonomy);
+        }
+        data.messages.forEach(item => appendMessage(item.role, item.content));
+        await refreshPlot({ allowInitialWellSelection: true });
+        refreshLearning();
+      }
+
+      async function sendChat() {
+        if (!sessionId || isChatPending) return;
+        const message = chatInput.value.trim();
+        if (!message) return;
+        isChatPending = true;
+        chatBtn.disabled = true;
+        chatBtn.textContent = "Отправка...";
+        chatInput.disabled = true;
+
+        try {
+          const payload = {
+            message,
+            series: getSelectedSeries(),
+            time_column: timeColumn.value,
+            well_column: wellColumn.value,
+            well_value: wellValue.value,
+            date_from: dateFrom.value,
+            date_to: dateTo.value,
+            anomaly_goal: message,
+            chart_preferences: message,
+            window_size: windowSize.value,
+            statistical_threshold_pct: statisticalThresholdPct.value,
+            recommendation_mode: recommendationMode.value
+          };
+
+          const response = await fetch(`/api/chat/${sessionId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            alert(detailText(data.detail, "Ошибка чата"));
+            return;
+          }
+
+          appendMessage("user", message);
+          appendMessage("assistant", data.reply);
+          if (data.state) {
+            if (data.state.selected_series) {
+              fillMultiSelect(seriesSelect, currentProfile?.numeric_candidates || [], data.state.selected_series);
+            }
+            if (data.state.selected_well_value) {
+              wellValue.value = data.state.selected_well_value;
+            }
+            // Always sync dates from server state — even if only one side changed
+            if (data.state.date_from) dateFrom.value = formatDatetimeLocal(data.state.date_from);
+            else if (data.state.date_from === null) dateFrom.value = "";
+            if (data.state.date_to) dateTo.value = formatDatetimeLocal(data.state.date_to);
+            else if (data.state.date_to === null) dateTo.value = "";
+            if (data.state.statistical_threshold_pct !== null && data.state.statistical_threshold_pct !== undefined) {
+              statisticalThresholdPct.value = data.state.statistical_threshold_pct;
+            }
+            if (data.state.recommendation_mode) recommendationMode.value = data.state.recommendation_mode;
+            if (data.state.window_size) windowSize.value = data.state.window_size;
+            updateActiveFilterChips(data.state);
+          }
+          if (data.task_spec?.label_taxonomy?.length) {
+            updateLabelSelect(data.task_spec.label_taxonomy);
+          }
+
+          const readyForPass = data.llm?.ready_for_first_pass;
+          chatInput.value = "";
+          await refreshPlot();
+
+          if (readyForPass) {
+            const well = data.state?.selected_well_value ? `скв. ${data.state.selected_well_value}` : "";
+            const df = data.state?.date_from ? data.state.date_from.slice(0,10) : "";
+            const dt = data.state?.date_to ? data.state.date_to.slice(0,10) : "";
+            const period = (df || dt) ? ` · ${df}–${dt}` : "";
+            flashPlotBanner(`✓ График обновлён${well ? " · " + well : ""}${period}`);
+            appendMessage("system", "Параметры применены. График обновлён. Можно разметчать.");
+            chatInput.placeholder = "Уточнить параметры...";
+          }
+        } finally {
+          isChatPending = false;
+          chatBtn.disabled = false;
+          chatBtn.textContent = "Отправить";
+          chatInput.disabled = false;
+        }
+      }
+
+      async function refreshPlot(options = {}) {
+        if (!sessionId) return;
+
+        const params = new URLSearchParams();
+        if (timeColumn.value) params.set("time_column", timeColumn.value);
+        if (wellColumn.value) params.set("well_column", wellColumn.value);
+        if (wellValue.value) params.set("well_value", wellValue.value);
+        if (dateFrom.value) params.set("date_from", dateFrom.value);
+        if (dateTo.value) params.set("date_to", dateTo.value);
+        const seriesJoined = getSelectedSeries().join(",");
+        if (seriesJoined) params.set("series", seriesJoined);
+        if (windowSize.value !== "" && windowSize.value !== null) params.set("window_size", windowSize.value);
+        if (statisticalThresholdPct.value !== "" && statisticalThresholdPct.value !== null) params.set("statistical_threshold_pct", statisticalThresholdPct.value);
+        if (recommendationMode.value) params.set("recommendation_mode", recommendationMode.value);
+
+        const response = await fetch(`/api/plot/${sessionId}?${params.toString()}`);
+        const data = await response.json();
+        if (!response.ok) {
+          alert(detailText(data.detail, "Ошибка графика"));
+          return;
+        }
+
+        latestPlotWarning = data.plot_warning || null;
+        if (data.statistical_threshold_pct !== null && data.statistical_threshold_pct !== undefined) {
+          statisticalThresholdPct.value = data.statistical_threshold_pct;
+        }
+
+        if ((data.plot?.row_count || 0) === 0 && latestPlotPayload) {
+          if (data.selected_well_value) {
+            fillSingleSelect(wellValue, data.plot.well_values || [], data.selected_well_value, true);
+            wellValue.value = data.selected_well_value;
+          }
+          surfaceStatus.textContent = latestPlotWarning || "Для выбранных фильтров данных не найдено.";
+          return;
+        }
+
+        latestPlotPayload = data.plot;
+        latestCandidateIntervals = data.candidate_intervals || [];
+        latestCandidateIntervalStats = data.candidate_interval_stats || [];
+        latestWindowSize = Number(data.window_size || 20);
+        latestRecommendationMode = data.recommendation_mode || "point";
+        reviewModeChip.textContent = `Режим: ${formatMode(latestRecommendationMode)}`;
+        reviewWindowChip.textContent = `Окно: ${latestWindowSize || "n/a"}`;
+
+        const requestedWell = wellValue.value;
+        fillSingleSelect(wellValue, data.plot.well_values || [], requestedWell, true);
+        if (data.selected_well_value) {
+          wellValue.value = data.selected_well_value;
+        }
+        if (
+          options.allowInitialWellSelection &&
+          !wellValue.value &&
+          wellValue.options.length > 1
+        ) {
+          wellValue.value = wellValue.options[1].value;
+          await refreshPlot({ allowInitialWellSelection: false });
+          return;
+        }
+
+        pendingRecommendation = null;
+        suggestedRecommendation = data.recommendation && !data.recommendation.locked && data.recommendation.x
+          ? data.recommendation
+          : null;
+        currentRecommendation = data.recommendation && data.recommendation.locked
+          ? data.recommendation
+          : null;
+        if (options.focusAnnotation) {
+          currentRecommendation = { ...options.focusAnnotation, locked: true };
+          suggestedRecommendation = null;
+        }
+
+        updateAnnotationsTable(data.saved_annotations || [], "");
+        updateCandidateIntervals(latestCandidateIntervals, latestCandidateIntervalStats);
+
+        // Auto-zoom to earliest visible candidate when date filter changes
+        const activeDateFilter = (dateFrom.value || "") + "|" + (dateTo.value || "");
+        if ((dateFrom.value || dateTo.value) && activeDateFilter !== lastDateFilterForZoom) {
+          lastDateFilterForZoom = activeDateFilter;
+          const visible = getFilteredCandidates();
+          if (visible.length && visible[0].start) {
+            const t0 = new Date(visible[0].start).getTime();
+            const rangeEnd = dateTo.value ? new Date(dateTo.value).getTime() : t0 + 24 * 3600 * 1000;
+            currentViewport = [
+              new Date(t0 - 30 * 60 * 1000).toISOString(),
+              new Date(Math.max(rangeEnd, t0 + 3 * 3600 * 1000)).toISOString(),
+            ];
+          }
+        }
+
+        await refreshAnnotations();
+        renderPlot();
+        if (latestPlotWarning) {
+          surfaceStatus.textContent = latestPlotWarning;
+        }
+      }
+
+      async function confirmRecommendation(mode) {
+        if (!sessionId || !pendingRecommendation || pendingRecommendation.mode !== mode) return;
+        if (mode === "interval" && !pendingRecommendation.x_end) return;
+
+        const payload = {
+          ...pendingRecommendation,
+          locked: true,
+          label: labelSelect.value || null,
+          correction_reason: correctionReason.value.trim() || null,
+        };
+        const isEditing = Boolean(editingAnnotationId);
+        const url = isEditing
+          ? `/api/annotations/${sessionId}/${editingAnnotationId}`
+          : `/api/recommendation/${sessionId}`;
+        const response = await fetch(url, {
+          method: isEditing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          alert(detailText(data.detail, "Ошибка фиксации"));
+          return;
+        }
+
+        currentRecommendation = data.recommendation || payload;
+        suggestedRecommendation = null;
+        pendingRecommendation = null;
+        editingAnnotationId = isEditing ? editingAnnotationId : null;
+        updateAnnotationsTable(data.saved_annotations || [], "");
+        await refreshAnnotations();
+        refreshLearning();
+
+        // Re-detect candidates (server filters out the just-labeled interval)
+        // then auto-open the next unlabeled candidate
+        await refreshPlot();
+        const remaining = getFilteredCandidates();
+        if (remaining.length > 0) {
+          openCandidateInterval(remaining[0]._origIdx);
+        } else {
+          activeCandidateIndex = null;
+          renderPlot();
+        }
+      }
+
+      function undoLastSelection() {
+        pendingRecommendation = null;
+        renderPlot();
+      }
+
+      async function resetRecommendation() {
+        if (!sessionId) return;
+
+        pendingRecommendation = null;
+        currentRecommendation = null;
+        suggestedRecommendation = null;
+        currentViewport = null;
+        lastAutoFocusKey = null;
+        editingAnnotationId = null;
+
+        await fetch(`/api/recommendation/${sessionId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: recommendationMode.value,
+            x: null,
+            x_end: null,
+            y: null,
+            locked: false
+          })
+        });
+
+        await refreshPlot();
+      }
+
+      function findAnnotation(annotationId) {
+        return latestAnnotations.find(item => item.annotation_id === annotationId) || null;
+      }
+
+      async function openAnnotationForEditing(annotationId) {
+        const annotation = findAnnotation(annotationId);
+        if (!annotation) return;
+
+        editingAnnotationId = annotationId;
+        pendingRecommendation = null;
+        suggestedRecommendation = null;
+        currentViewport = null;
+        lastAutoFocusKey = null;
+
+        if (Array.isArray(annotation.series) && annotation.series.length) {
+          fillMultiSelect(seriesSelect, currentProfile?.numeric_candidates || [], annotation.series);
+        }
+        if (annotation.window_size) {
+          windowSize.value = annotation.window_size;
+        }
+        if (annotation.date_from) {
+          dateFrom.value = formatDatetimeLocal(annotation.date_from);
+        }
+        if (annotation.date_to) {
+          dateTo.value = formatDatetimeLocal(annotation.date_to);
+        }
+        recommendationMode.value = annotation.recommendation_mode || "point";
+        labelSelect.value = annotation.label || "";
+        correctionReason.value = annotation.correction_reason || "";
+
+        await refreshPlot({
+          focusAnnotation: {
+            mode: annotation.recommendation_mode,
+            x: annotation.x,
+            x_end: annotation.x_end,
+            y: annotation.y,
+            trace_name: annotation.trace_name,
+            locked: true
+          }
+        });
+      }
+
+      async function deleteAnnotationById(annotationId) {
+        if (!sessionId || !annotationId) return;
+        const annotation = findAnnotation(annotationId);
+        if (!annotation) return;
+        const confirmed = window.confirm(`Удалить разметку ${selectionCoords({
+          mode: annotation.recommendation_mode,
+          x: annotation.x,
+          x_end: annotation.x_end,
+          y: annotation.y
+        })}?`);
+        if (!confirmed) return;
+
+        const response = await fetch(`/api/annotations/${sessionId}/${annotationId}`, {
+          method: "DELETE"
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          alert(detailText(data.detail, "Ошибка удаления"));
+          return;
+        }
+
+        if (editingAnnotationId === annotationId) {
+          editingAnnotationId = null;
+          pendingRecommendation = null;
+          currentRecommendation = null;
+          suggestedRecommendation = null;
+          currentViewport = null;
+          lastAutoFocusKey = null;
+        }
+
+        updateAnnotationsTable(data.saved_annotations || [], "");
+        await refreshAnnotations();
+        refreshLearning();
+        renderPlot();
+      }
+
+      function clearEditingMode() {
+        editingAnnotationId = null;
+        pendingRecommendation = null;
+        renderPlot();
+      }
+
+      function openCandidateInterval(index) {
+        const candidate = latestCandidateIntervals[index];
+        if (!candidate) return;
+        activeCandidateIndex = index;
+        updateCandidateIntervals(latestCandidateIntervals, latestCandidateIntervalStats);
+        pendingRecommendation = {
+          mode: "interval",
+          x: candidate.start,
+          x_end: candidate.end,
+          y: null,
+          trace_name: candidate.series_name || getPrimaryTrace(latestPlotPayload)?.name || null,
+          locked: false
+        };
+        renderPlot();
+      }
+
+      uploadBtn.addEventListener("click", uploadFile);
+      chatBtn.addEventListener("click", sendChat);
+      refreshPlotBtn.addEventListener("click", () => refreshPlot());
+      confirmPointBtn.addEventListener("click", () => confirmRecommendation("point"));
+      confirmIntervalBtn.addEventListener("click", () => confirmRecommendation("interval"));
+      undoSelectionBtn.addEventListener("click", undoLastSelection);
+      resetXRangeBtn.addEventListener("click", resetViewport);
+      resetRecommendationBtn.addEventListener("click", resetRecommendation);
+      clearEditingBtn.addEventListener("click", clearEditingMode);
+      annotationsTableBody.addEventListener("click", event => {
+        const target = event.target.closest("button[data-action]");
+        if (!target) return;
+        const annotationId = target.dataset.id;
+        if (target.dataset.action === "edit") {
+          openAnnotationForEditing(annotationId);
+          return;
+        }
+        if (target.dataset.action === "delete") {
+          deleteAnnotationById(annotationId);
+        }
+      });
+      candidateIntervalsList.addEventListener("click", event => {
+        const target = event.target.closest("button[data-candidate-index]");
+        if (!target) return;
+        openCandidateInterval(Number(target.dataset.candidateIndex));
+      });
+
+      timeColumn.addEventListener("change", () => refreshPlot());
+      wellColumn.addEventListener("change", () => refreshPlot({ allowInitialWellSelection: true }));
+      wellValue.addEventListener("change", () => {
+        updateActiveFilterChips({ selected_well_value: wellValue.value, date_from: dateFrom.value, date_to: dateTo.value });
+        refreshPlot();
+      });
+      windowSize.addEventListener("change", () => refreshPlot());
+      dateFrom.addEventListener("change", () => {
+        updateActiveFilterChips({ selected_well_value: wellValue.value, date_from: dateFrom.value, date_to: dateTo.value });
+        refreshPlot();
+      });
+      dateTo.addEventListener("change", () => {
+        updateActiveFilterChips({ selected_well_value: wellValue.value, date_from: dateFrom.value, date_to: dateTo.value });
+        refreshPlot();
+      });
+      statisticalThresholdPct.addEventListener("change", () => refreshPlot());
+      recommendationMode.addEventListener("change", () => refreshPlot());
+      seriesSelect.addEventListener("change", () => refreshPlot());
+      cursorSlider.addEventListener("input", () => applyCursorSelection(cursorSlider.value));
+    </script>
+  </body>
+</html>

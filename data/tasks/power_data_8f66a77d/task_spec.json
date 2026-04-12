@@ -1,0 +1,69 @@
+{
+  "task_id": "power_data_8f66a77d",
+  "version": "0.1.0",
+  "title": "Task for Power_data.xlsx",
+  "equipment_family": "rod_pump_unit",
+  "primary_deviation": "user_defined_deviation",
+  "signal_schema": [
+    {
+      "name": "Активная мощность",
+      "unit": null,
+      "role": "candidate_signal",
+      "selected_for_review": true
+    },
+    {
+      "name": "Входное напряжение",
+      "unit": null,
+      "role": "candidate_signal",
+      "selected_for_review": false
+    }
+  ],
+  "segmentation_strategy": "regime_segment_with_manual_point_or_interval_refinement",
+  "feature_profile": [
+    "power_mean",
+    "power_std",
+    "power_p10",
+    "power_p90",
+    "transition_sharpness",
+    "segment_duration"
+  ],
+  "label_taxonomy": [
+    "candidate_deviation",
+    "planned_stop",
+    "planned_maintenance",
+    "sensor_issue",
+    "stable_unusual_regime",
+    "unknown"
+  ],
+  "unknown_label": "unknown",
+  "context_sources": [
+    "maintenance_reports",
+    "equipment_metadata",
+    "engineer_review_notes"
+  ],
+  "baseline_strategy": "per_well_history",
+  "quality_rules": [
+    "require_time_axis",
+    "drop_non_numeric_signal_values",
+    "flag_dropout_segments"
+  ],
+  "review_policy": {
+    "policy_name": "human_review_required",
+    "auto_label_allowed": false,
+    "allow_modify": true,
+    "allow_reject": true,
+    "allow_point": true,
+    "allow_interval": true
+  },
+  "normal_operation_definition": null,
+  "confounders": [
+    "planned_stop",
+    "planned_maintenance",
+    "sensor_issue",
+    "load_change"
+  ],
+  "minimum_segment_duration": 59,
+  "expected_deviation_frequency": null,
+  "well_column": "__sheet_name",
+  "time_column": "Дата и время"
+}

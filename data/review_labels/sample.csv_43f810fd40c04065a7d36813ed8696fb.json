@@ -1,0 +1,20 @@
+[
+  {
+    "annotation_id": "36dd3dcc6ca741d682395ba52a7f7d58",
+    "filename": "sample.csv",
+    "well_column": "m_geo",
+    "well_value": "A",
+    "recommendation_mode": "point",
+    "x": "2024-03-06T00:00:30+00:00",
+    "x_end": null,
+    "y": 12.0,
+    "trace_name": "p18",
+    "series": [
+      "p18"
+    ],
+    "window_size": null,
+    "date_from": null,
+    "date_to": null,
+    "created_at": "2026-04-10T18:42:58.162484+00:00"
+  }
+]

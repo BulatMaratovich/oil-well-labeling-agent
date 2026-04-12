@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: oil-well-labeling-agent
+Version: 0.1.0
+Summary: FastAPI web UI for industrial time-series labeling
+Requires-Python: >=3.9
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.30.0
+Requires-Dist: jinja2>=3.1.4
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: pandas>=2.2.2
+Requires-Dist: openpyxl>=3.1.5
+Requires-Dist: ruptures>=1.1.10

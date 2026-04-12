@@ -1,0 +1,59 @@
+[project]
+name = "oil-well-labeling-agent"
+version = "0.2.0"
+description = "FastAPI web UI for industrial time-series labeling with rule-based pipeline"
+requires-python = ">=3.9"
+dependencies = [
+    # Web
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "jinja2>=3.1.4",
+    "python-multipart>=0.0.9",
+    "python-dotenv>=1.0.1",
+    # Data
+    "pandas>=2.2.2",
+    "openpyxl>=3.1.5",
+    "numpy>=1.26.0",
+    # Signal processing
+    "ruptures>=1.1.10",
+    "scipy>=1.13.0",
+    "scikit-learn>=1.5.0",
+    # LLM
+    "mistralai>=1.0.0",
+    # Config
+    "pyyaml>=6.0.1",
+]
+
+[project.optional-dependencies]
+llm-anthropic = ["anthropic>=0.28.0"]
+observability = ["structlog>=24.1.0", "rich>=13.7.0"]
+retrieval = [
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = [
+    "app*",
+    "core*",
+    "signals*",
+    "rules*",
+    "context*",
+    "learning*",
+    "agents*",
+    "observability*",
+    "adapters*",
+    "config*",
+]

@@ -1,0 +1,38 @@
+[
+  {
+    "annotation_id": "e5fcace0c3ba4d1d80e4bc80e5aaf175",
+    "filename": "Power_data.xlsx",
+    "well_column": "Скважина",
+    "well_value": "1276",
+    "recommendation_mode": "point",
+    "x": "2023-07-06 07:38:02",
+    "x_end": null,
+    "y": 14.8000001907,
+    "trace_name": "Активная мощность",
+    "series": [
+      "Активная мощность"
+    ],
+    "window_size": 28,
+    "date_from": null,
+    "date_to": null,
+    "created_at": "2026-04-10T19:02:42.218197+00:00"
+  },
+  {
+    "annotation_id": "78591db680a14dd4a41b3094f5b25ec9",
+    "filename": "Power_data.xlsx",
+    "well_column": "Скважина",
+    "well_value": "1276",
+    "recommendation_mode": "point",
+    "x": "2023-07-06 10:14",
+    "x_end": null,
+    "y": 18.3999996185,
+    "trace_name": "Активная мощность",
+    "series": [
+      "Активная мощность"
+    ],
+    "window_size": 28,
+    "date_from": null,
+    "date_to": null,
+    "created_at": "2026-04-10T19:02:53.181477+00:00"
+  }
+]
