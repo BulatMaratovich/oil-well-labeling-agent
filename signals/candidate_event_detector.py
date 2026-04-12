@@ -74,6 +74,7 @@ def detect(
                     f"{task_spec.primary_deviation} — полная серия, "
                     f"структура режимов не обнаружена"
                 ),
+                series_name=regime_sequence.signal_name,
                 flags=["no_regime_structure"],
             )
         ]
@@ -93,6 +94,7 @@ def detect(
             preceding=preceding,
             following=following,
             primary_deviation=task_spec.primary_deviation,
+            series_name=regime_sequence.signal_name,
         )
         candidates.extend(events_for_regime)
 
@@ -111,6 +113,7 @@ def _evaluate_regime(
     preceding: Optional[str],
     following: Optional[str],
     primary_deviation: str,
+    series_name: Optional[str],
 ) -> list[CandidateEvent]:
     events: list[CandidateEvent] = []
 
@@ -123,6 +126,7 @@ def _evaluate_regime(
             deviation_type="novel_regime",
             deviation_score=1.0,
             context_query=_query(primary_deviation, regime, "novel_regime"),
+            series_name=series_name,
             preceding_regime_type=preceding,
             following_regime_type=following,
             flags=["novel_regime_type"],
@@ -141,6 +145,7 @@ def _evaluate_regime(
                 deviation_type="atypical_amplitude",
                 deviation_score=round(score, 4),
                 context_query=_query(primary_deviation, regime, "low_amplitude"),
+                series_name=series_name,
                 preceding_regime_type=preceding,
                 following_regime_type=following,
             ))
@@ -153,6 +158,7 @@ def _evaluate_regime(
                 deviation_type="atypical_amplitude",
                 deviation_score=round(score, 4),
                 context_query=_query(primary_deviation, regime, "high_amplitude"),
+                series_name=series_name,
                 preceding_regime_type=preceding,
                 following_regime_type=following,
             ))
@@ -169,6 +175,7 @@ def _evaluate_regime(
                 deviation_type="unusual_duration",
                 deviation_score=round(score, 4),
                 context_query=_query(primary_deviation, regime, "unusual_duration"),
+                series_name=series_name,
                 preceding_regime_type=preceding,
                 following_regime_type=following,
             ))

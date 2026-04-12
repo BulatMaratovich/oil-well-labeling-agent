@@ -12,21 +12,11 @@ from app.models import SessionState
 
 
 SYSTEM_PROMPT = (
-    "Ты discovery-ассистент для промышленной разметки временных рядов. "
-    "Работаешь в двух режимах:\n\n"
-    "РЕЖИМ 1 — Настройка (до первого прохода):\n"
-    "Помоги выбрать ряды, скважину, диапазон дат, тип отклонений, режим (точка/интервал) и размер окна. "
-    "Если пользователь не знает с чего начать — скажи ему, что параметры можно задать прямо "
-    "на панели инструментов слева: выбрать скважину в выпадающем списке, "
-    "указать диапазон дат и нажать 'Обновить график'. "
-    "Через чат удобно задавать аналитические параметры (тип отклонения, порог, режим).\n\n"
-    "РЕЖИМ 2 — Разметка (после появления кандидатов):\n"
-    "Справа отображается панель кандидатов — аномальных интервалов, найденных агентом. "
-    "Для каждого кандидата: нажать 'Открыть' → изучить интервал на графике → "
-    "выбрать метку (belt_break, planned_stop, sensor_issue и т.д.) → "
-    "добавить комментарий при необходимости → нажать 'Интервал ✓'. "
-    "Если предложенный диапазон неточен — выбрать другой интервал мышкой и уточнить причину. "
-    "После каждой разметки агент автоматически пересматривает оставшихся кандидатов. "
+    "Ты task-ассистент для промышленной разметки временных рядов. "
+    "Через чат ты помогаешь уточнить, что считать отклонением, какие есть конфаундеры, "
+    "что считать нормальной работой и как интерпретировать предложенную системой метку. "
+    "Не дублируй выбор скважины, дат, рядов и масштаба: эти параметры задаются напрямую в интерфейсе. "
+    "После появления кандидатов объясняй proposed label, правило и возможные действия reviewer. "
     "Нельзя выдавать финальную разметку как факт. "
     "Задавай не больше двух вопросов за раз."
 )
@@ -97,8 +87,8 @@ def build_initial_message(state: SessionState) -> str:
         parts.append(f"Числовые ряды, которые можно вывести: {preview}.")
 
     parts.append(
-        "Уточните, какие столбцы показать на графике, что считать отклонением, "
-        "какой размер центрального окна нужен для рекомендации, и нужна ли рекомендация точкой или интервалом."
+        "Через интерфейс выберите скважину, период и ряды для обзора. "
+        "Через чат можно уточнить тип отклонения, конфаундеры и определение нормальной работы."
     )
     return " ".join(parts)
 
@@ -115,21 +105,20 @@ def _is_review_phase(state: SessionState) -> bool:
 def _review_guidance_reply(state: SessionState) -> str:
     parts = [
         "Вы находитесь в режиме разметки. В правой панели перечислены кандидаты — "
-        "интервалы, которые агент счёл аномальными."
+        "интервалы, которые система вынесла на review."
     ]
     parts.append(
         "Для каждого кандидата: нажмите 'Открыть' → изучите интервал на графике → "
-        "выберите метку из выпадающего списка → при желании добавьте комментарий в поле рядом → "
-        "нажмите 'Интервал ✓' (или 'Точка ✓' если режим — точка)."
+        "проверьте предложенную метку и rule trace → затем примите, скорректируйте, отклоните или пометьте как ambiguous."
     )
     parts.append(
-        "Метки: 'candidate_deviation' или 'belt_break' — это реальное отклонение; "
+        "Метки: 'belt_break' — реальное отклонение; "
         "'planned_stop' / 'planned_maintenance' — плановые события; "
         "'sensor_issue' — проблема с датчиком; 'stable_unusual_regime' — нетипичный, но стабильный режим."
     )
     parts.append(
-        "Если предложенный диапазон неточен — выделите нужный участок мышкой прямо на графике, "
-        "затем выберите метку и подтвердите. После каждой разметки список кандидатов обновляется."
+        "Если предложенный диапазон неточен — уточните интервал на графике, затем выполните review action. "
+        "После каждой завершённой проверки список нерешённых кандидатов обновляется."
     )
     if state.selected_well_value:
         parts.append(
@@ -184,34 +173,6 @@ def apply_discovery_updates(state: SessionState, updates: dict[str, Any]) -> Non
     if not updates:
         return
 
-    if state.profile:
-        candidates = set(state.profile.numeric_candidates)
-        selected_series = [
-            item for item in (updates.get("selected_series") or []) if item in candidates
-        ]
-        if selected_series:
-            state.selected_series = selected_series
-
-        if state.profile.inferred_well_column:
-            well_values = set(state.profile.sheet_names)
-            if not well_values and state.selected_well_value:
-                well_values.add(state.selected_well_value)
-            selected_well_value = updates.get("selected_well_value")
-            if selected_well_value and (not well_values or selected_well_value in well_values):
-                state.selected_well_value = selected_well_value
-
-    if updates.get("date_from"):
-        df = str(updates["date_from"])
-        # Bare date → start of day
-        if re.match(r'^\d{4}-\d{2}-\d{2}$', df):
-            df += "T00:00:00"
-        state.date_from = df
-    if updates.get("date_to"):
-        dt = str(updates["date_to"])
-        # Bare date → end of day so the entire day is included
-        if re.match(r'^\d{4}-\d{2}-\d{2}$', dt):
-            dt += "T23:59:59"
-        state.date_to = dt
     if updates.get("anomaly_goal"):
         state.anomaly_goal = str(updates["anomaly_goal"])
     if updates.get("chart_preferences"):
@@ -368,14 +329,6 @@ def _fallback_reply(state: SessionState, user_message: str) -> str:
 
     prompts: list[str] = []
 
-    if not state.selected_series:
-        prompts.append("Сначала выберите хотя бы один числовой ряд для графика.")
-    if not state.selected_time_column:
-        prompts.append("Нужно подтвердить колонку времени.")
-    if state.profile and state.profile.detected_multiple_wells and not state.selected_well_value:
-        prompts.append("В файле несколько скважин. Выберите, какую скважину открыть первой.")
-    if state.profile and state.profile.rows > 100_000 and not (state.selected_well_value or state.date_from or state.date_to):
-        prompts.append("Файл большой. Лучше сразу сузить данные по скважине или диапазону дат перед построением графика.")
     anomaly_markers = ("отклон", "аномал", "падени", "скач", "останов", "шум", "полк", "обрыв")
     chart_markers = ("граф", "plot", "подграф", "маркер", "линия", "overlay", "subplot")
     if not state.anomaly_goal and not any(marker in lower for marker in anomaly_markers):
@@ -395,15 +348,14 @@ def _fallback_reply(state: SessionState, user_message: str) -> str:
 
     if prompts:
         tip = (
-            " Подсказка: скважину, диапазон дат и порог можно задать прямо на панели инструментов — "
-            "выпадающий список 'Лист / скважина', поля 'Дата от / до' и кнопка 'Обновить график'."
+            " Подсказка: скважину, диапазон дат и ряды задавайте на панели инструментов, "
+            "а через чат фиксируйте смысл задачи и правила интерпретации."
         )
         return " ".join(prompts) + tip
 
     return (
-        "Параметров уже достаточно для первого прохода. Построю график и покажу кандидатов. "
-        "Дальше: в правой панели откройте кандидата → выберите метку → нажмите 'Интервал ✓'. "
-        "Если интервал неточен — выделите другой диапазон на графике и укажите причину."
+        "Параметров задачи уже достаточно. Обновите график и откройте кандидата в правой панели. "
+        "Дальше: проверьте предложенную метку и rule trace, затем примите, скорректируйте, отклоните или пометьте случай как ambiguous."
     )
 
 
@@ -425,11 +377,11 @@ def build_guided_reply(
         else:
             candidate_phrase = "предложу интервалы, где заметны изменения амплитуды"
         ready = (
-            f"Покажу график по выбранной скважине и периоду и {candidate_phrase}. "
+            f"После обновления графика система {candidate_phrase}. "
             "Кандидаты появятся в правой панели. "
-            "Для каждого: нажмите 'Открыть' → выберите метку → нажмите 'Интервал ✓'. "
-            "Если диапазон неточен — выделите другой на графике и укажите причину. "
-            "После каждой разметки список кандидатов обновляется автоматически."
+            "Для каждого: нажмите 'Открыть' → проверьте proposed label и rule trace → "
+            "затем примите, скорректируйте, отклоните или пометьте как ambiguous. "
+            "После каждой завершённой проверки список нерешённых кандидатов обновляется автоматически."
         )
         return f"{summary} {ready}".strip() if summary else ready
 

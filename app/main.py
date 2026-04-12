@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 from io import StringIO
@@ -13,6 +14,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from agents.explanation_agent import explain as explain_review_candidate
 from app.data_utils import (
     detect_candidate_intervals,
     filter_dataframe,
@@ -39,6 +41,14 @@ from app.task_manager import (
     sync_task_spec_from_state,
 )
 from app.stat_analysis import analyze_candidate_intervals
+from core.canonical_schema import CandidateEvent, DateRange, LocalFeatures, RuleResult, RuleTrace
+from core.pipeline_runner import PipelineRunner
+from core.policy_engine import route as route_candidate
+from core.task_manager import (
+    ReviewPolicy as CoreReviewPolicy,
+    SignalSpec as CoreSignalSpec,
+    TaskSpec as CoreTaskSpec,
+)
 
 
 app = FastAPI(title="Oil Well Labeling UI")
@@ -100,27 +110,443 @@ def _find_annotation(state: SessionState, annotation_id: str) -> tuple[int, Save
     raise HTTPException(status_code=404, detail="Разметка не найдена")
 
 
-# Labels that indicate the candidate was NOT a deviation — user overrode the system's implicit suggestion
-_CONFOUNDER_LABELS = frozenset({"planned_stop", "planned_maintenance", "sensor_issue"})
+def _parse_ts(value: Optional[str]) -> datetime:
+    if not value:
+        return datetime.now(tz=timezone.utc)
+    parsed = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(parsed):
+        return datetime.now(tz=timezone.utc)
+    return parsed.to_pydatetime()
+
+
+def _serialize_rule_trace(trace: RuleTrace) -> dict[str, object]:
+    return asdict(trace)
+
+
+def _deserialize_rule_trace(payload: Optional[dict[str, object]]) -> RuleTrace:
+    payload = payload or {}
+    return RuleTrace(
+        rules_evaluated=list(payload.get("rules_evaluated") or []),
+        rules_fired=list(payload.get("rules_fired") or []),
+        rules_blocked=list(payload.get("rules_blocked") or []),
+        winning_rule=payload.get("winning_rule"),
+        conflict=bool(payload.get("conflict", False)),
+        abstain_reason=payload.get("abstain_reason"),
+    )
+
+
+def _deserialize_local_features(payload: Optional[dict[str, object]], candidate_id: str) -> Optional[LocalFeatures]:
+    if not payload:
+        return None
+    sanitized = {
+        key: value
+        for key, value in payload.items()
+        if key in LocalFeatures.__dataclass_fields__
+    }
+    sanitized.setdefault("candidate_id", candidate_id)
+    try:
+        return LocalFeatures(**sanitized)
+    except TypeError:
+        return None
+
+
+def _find_review_candidate(state: SessionState, candidate_id: Optional[str]) -> Optional[dict[str, object]]:
+    if not candidate_id:
+        return None
+    return next(
+        (item for item in state.review_candidates if item.get("candidate_id") == candidate_id),
+        None,
+    )
+
+
+def _delete_from_task_memory(state: SessionState, annotation_id: str) -> None:
+    if not state.task_spec:
+        return
+    try:
+        from learning.task_memory import TaskMemory
+
+        TaskMemory(state.task_spec.task_id).remove(annotation_id)
+    except Exception:
+        pass
+
+
+def _build_core_task_spec(
+    state: SessionState,
+    *,
+    selected_series: list[str],
+    time_column: Optional[str],
+    well_column: Optional[str],
+    window_size: Optional[int],
+    statistical_threshold_pct: Optional[float],
+) -> CoreTaskSpec:
+    source_spec = state.task_spec or build_initial_task_spec(state)
+    units_by_signal = {
+        item.name: item.unit
+        for item in (source_spec.signal_schema or [])
+    }
+    signal_schema = [
+        CoreSignalSpec(
+            name=name,
+            unit=units_by_signal.get(name),
+            role="candidate_signal",
+            selected_for_review=True,
+        )
+        for name in selected_series
+    ]
+    return CoreTaskSpec(
+        task_id=source_spec.task_id,
+        version=source_spec.version,
+        title=source_spec.title,
+        equipment_family=source_spec.equipment_family,
+        primary_deviation=state.anomaly_goal or source_spec.primary_deviation,
+        signal_schema=signal_schema,
+        well_column=well_column,
+        time_column=time_column,
+        segmentation_strategy=source_spec.segmentation_strategy,
+        minimum_segment_duration=window_size,
+        feature_profile=list(source_spec.feature_profile),
+        label_taxonomy=list(source_spec.label_taxonomy),
+        unknown_label=source_spec.unknown_label,
+        confounders=list(source_spec.confounders),
+        context_sources=list(source_spec.context_sources),
+        baseline_strategy=source_spec.baseline_strategy,
+        quality_rules=list(source_spec.quality_rules),
+        review_policy=CoreReviewPolicy(
+            policy_name=source_spec.review_policy.policy_name,
+            auto_label_allowed=False,
+            allow_modify=source_spec.review_policy.allow_modify,
+            allow_reject=source_spec.review_policy.allow_reject,
+            allow_point=source_spec.review_policy.allow_point,
+            allow_interval=source_spec.review_policy.allow_interval,
+        ),
+        normal_operation_definition=source_spec.normal_operation_definition,
+        expected_deviation_frequency=source_spec.expected_deviation_frequency,
+        statistical_threshold_pct=statistical_threshold_pct,
+    )
+
+
+def _fallback_candidate_id(
+    well_value: Optional[str],
+    series_name: Optional[str],
+    start: str,
+    end: str,
+    reason: str,
+) -> str:
+    raw = "|".join([
+        str(well_value or "unknown"),
+        str(series_name or "unknown"),
+        start,
+        end,
+        reason,
+    ])
+    return "fallback_" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _unknown_rule_result(label: str = "unknown") -> RuleResult:
+    return RuleResult(
+        label=label,
+        rule_trace=RuleTrace(abstain_reason="no_rule_matched"),
+        abstain_reason="no_rule_matched",
+    )
+
+
+def _review_candidate_payload(
+    candidate: CandidateEvent,
+    *,
+    rule_result: RuleResult,
+    local_features: Optional[LocalFeatures],
+    source: str,
+    routing: Optional[object] = None,
+    explanation: Optional[str] = None,
+) -> dict[str, object]:
+    flags = list(candidate.flags)
+    if getattr(routing, "disposition", None) == "mandatory_review":
+        flags.append(str(getattr(routing, "reason", "mandatory_review")))
+    return {
+        "candidate_id": candidate.candidate_id,
+        "start": candidate.segment.start.isoformat(),
+        "end": candidate.segment.end.isoformat(),
+        "series_name": candidate.series_name,
+        "source": source,
+        "deviation_type": candidate.deviation_type,
+        "deviation_score": candidate.deviation_score,
+        "reason": candidate.deviation_type,
+        "proposed_label": rule_result.label,
+        "routing": getattr(routing, "disposition", "mandatory_review"),
+        "routing_reason": getattr(routing, "reason", rule_result.abstain_reason or "review"),
+        "confidence": getattr(routing, "confidence", 0.0),
+        "flags": list(dict.fromkeys(flags)),
+        "winning_rule": rule_result.rule_trace.winning_rule,
+        "rule_trace": _serialize_rule_trace(rule_result.rule_trace),
+        "abstain_reason": rule_result.abstain_reason,
+        "conflict_flag": rule_result.conflict_flag,
+        "local_features": asdict(local_features) if local_features else {},
+        "explanation": explanation or explain_review_candidate(rule_result),
+    }
+
+
+def _build_pipeline_review_candidates(
+    pipeline_result,
+    core_spec: CoreTaskSpec,
+) -> list[dict[str, object]]:
+    features_by_id = {
+        item.candidate_id: item
+        for item in pipeline_result.local_features
+    }
+    contexts_by_id = {
+        item.candidate_id: item
+        for item in pipeline_result.context_bundles
+    }
+    review_candidates: list[dict[str, object]] = []
+    for index, candidate in enumerate(pipeline_result.candidates):
+        rule_result = (
+            pipeline_result.rule_results[index]
+            if index < len(pipeline_result.rule_results)
+            else _unknown_rule_result(core_spec.unknown_label)
+        )
+        context = contexts_by_id.get(candidate.candidate_id)
+        local_features = features_by_id.get(candidate.candidate_id)
+        routing = route_candidate(candidate, rule_result, core_spec)
+        review_candidates.append(
+            _review_candidate_payload(
+                candidate,
+                rule_result=rule_result,
+                local_features=local_features,
+                source="pipeline",
+                routing=routing,
+                explanation=explain_review_candidate(rule_result, context),
+            )
+        )
+    return review_candidates
+
+
+def _build_statistical_fallback_candidates(
+    *,
+    state: SessionState,
+    core_spec: CoreTaskSpec,
+    pipeline_result,
+    plot_payload: dict[str, object],
+    anomaly_goal: Optional[str],
+    statistical_threshold_pct: Optional[float],
+    window_size: Optional[int],
+) -> list[dict[str, object]]:
+    fallback = detect_candidate_intervals(
+        plot_payload=plot_payload,
+        anomaly_goal=anomaly_goal,
+        window_size=window_size,
+        statistical_threshold_pct=statistical_threshold_pct,
+    )
+    if not fallback:
+        return []
+
+    from rules.rule_engine import evaluate
+    from rules.rule_schemas import RuleInput
+    from rules.starter_ruleset import build_registry
+    from signals.local_segment_analyzer import analyze
+
+    registry = build_registry()
+    series_by_name = {item.signal_col: item for item in pipeline_result.series}
+    default_series = pipeline_result.series[0] if pipeline_result.series else None
+    review_candidates: list[dict[str, object]] = []
+
+    for item in fallback:
+        start = str(item.get("start") or "")
+        end = str(item.get("end") or start)
+        reason = str(item.get("reason") or "statistical_shift")
+        deviation_type = (
+            "abrupt_transition"
+            if reason == "change_in_local_amplitude"
+            else "atypical_amplitude"
+        )
+        candidate = CandidateEvent(
+            candidate_id=_fallback_candidate_id(
+                state.selected_well_value,
+                item.get("series_name"),
+                start,
+                end,
+                reason,
+            ),
+            asset_id=state.selected_well_value or "unknown",
+            segment=DateRange(start=_parse_ts(start), end=_parse_ts(end)),
+            deviation_type=deviation_type,
+            deviation_score=float(item.get("score") or 0.0),
+            context_query=f"statistical_fallback:{reason}",
+            series_name=item.get("series_name"),
+            flags=["statistical_fallback"],
+        )
+        signal_series = series_by_name.get(candidate.series_name) or default_series
+        local_features = analyze(candidate, signal_series) if signal_series else None
+        rule_result = evaluate(
+            RuleInput(
+                candidate=candidate,
+                features=local_features,
+                context=None,
+                task_params={
+                    "primary_deviation": core_spec.primary_deviation,
+                    "equipment_family": core_spec.equipment_family,
+                },
+            ),
+            registry,
+            unknown_label=core_spec.unknown_label,
+        )
+        routing = route_candidate(candidate, rule_result, core_spec)
+        payload = _review_candidate_payload(
+            candidate,
+            rule_result=rule_result,
+            local_features=local_features,
+            source="statistical_fallback",
+            routing=routing,
+        )
+        payload["reason"] = reason
+        review_candidates.append(payload)
+    return review_candidates
+
+
+def _review_cache_key(
+    *,
+    well_value: Optional[str],
+    selected_series: list[str],
+    time_column: Optional[str],
+    well_column: Optional[str],
+    window_size: Optional[int],
+    anomaly_goal: Optional[str],
+) -> str:
+    return json.dumps(
+        {
+            "well_value": well_value,
+            "selected_series": selected_series,
+            "time_column": time_column,
+            "well_column": well_column,
+            "window_size": window_size,
+            "anomaly_goal": anomaly_goal,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _build_review_candidates(
+    state: SessionState,
+    df: pd.DataFrame,
+    *,
+    selected_series: list[str],
+    time_column: Optional[str],
+    well_column: Optional[str],
+    well_value: Optional[str],
+    window_size: Optional[int],
+    statistical_threshold_pct: Optional[float],
+) -> list[dict[str, object]]:
+    cache_key = _review_cache_key(
+        well_value=well_value,
+        selected_series=selected_series,
+        time_column=time_column,
+        well_column=well_column,
+        window_size=window_size,
+        anomaly_goal=state.anomaly_goal,
+    )
+    if state.review_cache_key == cache_key and state.review_candidates:
+        return list(state.review_candidates)
+
+    if not time_column or not selected_series:
+        state.review_cache_key = cache_key
+        state.review_candidates = []
+        return []
+
+    full_scope_frame = filter_dataframe(
+        df=df,
+        time_column=time_column,
+        well_column=well_column,
+        well_value=well_value,
+        date_from=None,
+        date_to=None,
+    )
+    if full_scope_frame.empty:
+        state.review_cache_key = cache_key
+        state.review_candidates = []
+        return []
+
+    core_spec = _build_core_task_spec(
+        state,
+        selected_series=selected_series,
+        time_column=time_column,
+        well_column=well_column,
+        window_size=window_size,
+        statistical_threshold_pct=statistical_threshold_pct,
+    )
+    runner = PipelineRunner(core_spec)
+    pipeline_result = runner.run(
+        full_scope_frame.to_csv(index=False).encode("utf-8"),
+        asset_id=well_value,
+        filename="session.csv",
+    )
+    review_candidates = _build_pipeline_review_candidates(pipeline_result, core_spec)
+    if not review_candidates:
+        full_scope_plot = normalize_for_plot(
+            df=full_scope_frame,
+            time_column=time_column,
+            well_column=None,
+            well_value=None,
+            date_from=None,
+            date_to=None,
+            series_names=selected_series,
+        )
+        review_candidates = _build_statistical_fallback_candidates(
+            state=state,
+            core_spec=core_spec,
+            pipeline_result=pipeline_result,
+            plot_payload=full_scope_plot,
+            anomaly_goal=state.anomaly_goal,
+            statistical_threshold_pct=statistical_threshold_pct,
+            window_size=window_size,
+        )
+
+    state.review_cache_key = cache_key
+    state.review_candidates = review_candidates
+    return list(review_candidates)
+
+
+def _resolve_review_decision(
+    state: SessionState,
+    payload: dict[str, object],
+    candidate: Optional[dict[str, object]],
+) -> tuple[str, Optional[str], str]:
+    action = str(payload.get("review_action") or "").strip().lower()
+    selected_label = payload.get("label")
+    label = str(selected_label).strip() if isinstance(selected_label, str) and selected_label.strip() else None
+    proposed_label = (
+        str(candidate.get("proposed_label"))
+        if candidate and candidate.get("proposed_label")
+        else state.task_spec.unknown_label if state.task_spec else "unknown"
+    )
+
+    if action not in {"accept", "override", "reject", "ambiguous"}:
+        action = "override" if label else "accept"
+
+    if action == "override" and not label:
+        raise HTTPException(status_code=400, detail="Для override выберите итоговую метку")
+
+    if action == "accept":
+        return action, proposed_label, "accepted"
+    if action == "override":
+        return action, label, "accepted"
+    if action == "reject":
+        return action, label or proposed_label, "rejected"
+    fallback_label = state.task_spec.unknown_label if state.task_spec else "unknown"
+    return action, label or fallback_label, "ambiguous"
 
 
 def _write_to_task_memory(state: SessionState, annotation: SavedAnnotation) -> None:
     """Persist annotation as a LabelRecord in TaskMemory for learning."""
-    if not state.task_spec or not annotation.label:
+    if not state.task_spec or not annotation.x:
         return
     try:
         from learning.task_memory import TaskMemory
-        from core.canonical_schema import DateRange, LabelRecord, RuleResult, RuleTrace
+        from core.canonical_schema import LabelRecord
 
-        def _parse_ts(s: Optional[str]) -> datetime:
-            if not s:
-                return datetime.now(tz=timezone.utc)
-            try:
-                dt = datetime.fromisoformat(s)
-                return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-            except ValueError:
-                return datetime.now(tz=timezone.utc)
-
+        rule_trace = _deserialize_rule_trace(annotation.rule_trace)
+        proposed_label = annotation.proposed_label or state.task_spec.unknown_label
+        final_label = annotation.label or proposed_label
+        local_features = _deserialize_local_features(annotation.local_features, annotation.candidate_id or annotation.annotation_id)
         record = LabelRecord(
             record_id=annotation.annotation_id,
             task_id=state.task_spec.task_id,
@@ -129,22 +555,36 @@ def _write_to_task_memory(state: SessionState, annotation: SavedAnnotation) -> N
                 start=_parse_ts(annotation.x),
                 end=_parse_ts(annotation.x_end) if annotation.x_end else _parse_ts(annotation.x),
             ),
-            deviation_type=state.anomaly_goal or state.task_spec.primary_deviation,
-            local_features=None,
-            # The system's implicit suggestion for any candidate is "candidate_deviation"
-            rule_result=RuleResult(label="candidate_deviation", rule_trace=RuleTrace()),
-            final_label=annotation.label,
-            was_override=annotation.label in _CONFOUNDER_LABELS,
+            deviation_type=annotation.deviation_type or state.anomaly_goal or state.task_spec.primary_deviation,
+            local_features=local_features,
+            rule_result=RuleResult(
+                label=proposed_label,
+                rule_trace=rule_trace,
+                abstain_reason=rule_trace.abstain_reason,
+                conflict_flag=rule_trace.conflict,
+            ),
+            final_label=final_label,
+            was_override=annotation.review_action == "override",
             correction_reason=annotation.correction_reason,
             confirmed_at=datetime.now(tz=timezone.utc),
-            status="accepted",
+            status=annotation.review_status,
         )
         TaskMemory(state.task_spec.task_id).add(record)
     except Exception:
         pass  # memory write failure must not break annotation save
 
 
-def _save_annotation(state: SessionState, label: Optional[str] = None, correction_reason: Optional[str] = None) -> SavedAnnotation:
+def _save_annotation(
+    state: SessionState,
+    *,
+    label: Optional[str] = None,
+    correction_reason: Optional[str] = None,
+    review_action: Optional[str] = None,
+    review_status: str = "accepted",
+    candidate: Optional[dict[str, object]] = None,
+) -> SavedAnnotation:
+    proposed_label = str(candidate.get("proposed_label")) if candidate and candidate.get("proposed_label") else None
+    final_label = label or proposed_label
     annotation = SavedAnnotation(
         filename=state.filename,
         well_column=state.selected_well_column,
@@ -158,9 +598,21 @@ def _save_annotation(state: SessionState, label: Optional[str] = None, correctio
         window_size=state.window_size,
         date_from=state.date_from,
         date_to=state.date_to,
-        label=label or None,
+        label=final_label or None,
         correction_reason=correction_reason or None,
         created_at=datetime.now(timezone.utc).isoformat(),
+        candidate_id=str(candidate.get("candidate_id")) if candidate and candidate.get("candidate_id") else None,
+        proposed_label=proposed_label,
+        proposed_rule=str(candidate.get("winning_rule")) if candidate and candidate.get("winning_rule") else None,
+        review_action=review_action,
+        review_status=review_status,
+        routing=str(candidate.get("routing")) if candidate and candidate.get("routing") else None,
+        candidate_source=str(candidate.get("source")) if candidate and candidate.get("source") else None,
+        deviation_type=str(candidate.get("deviation_type")) if candidate and candidate.get("deviation_type") else None,
+        deviation_score=float(candidate.get("deviation_score")) if candidate and candidate.get("deviation_score") is not None else None,
+        explanation=str(candidate.get("explanation")) if candidate and candidate.get("explanation") else None,
+        rule_trace=dict(candidate.get("rule_trace") or {}) if candidate else {},
+        local_features=dict(candidate.get("local_features") or {}) if candidate else {},
     )
     state.saved_annotations.append(annotation)
     _persist_annotations(state)
@@ -168,24 +620,35 @@ def _save_annotation(state: SessionState, label: Optional[str] = None, correctio
     return annotation
 
 
-def _filter_unannotated_candidates(
+def _filter_unreviewed_candidates(
     candidates: list[dict],
     saved_annotations: list[SavedAnnotation],
     well_value: Optional[str],
 ) -> list[dict]:
-    """Remove candidates whose time range is already covered by a saved annotation."""
+    """Remove candidates that already have a completed review action."""
     if not candidates or not saved_annotations:
         return candidates
-    # Build list of (start, end) for annotations on this well that have a label
+    reviewed_candidate_ids = {
+        item.candidate_id
+        for item in saved_annotations
+        if item.candidate_id
+        and item.review_status in {"accepted", "rejected", "ambiguous"}
+        and (well_value is None or item.well_value == well_value)
+    }
     annotated: list[tuple[str, str]] = [
         (a.x, a.x_end or a.x)
         for a in saved_annotations
-        if a.label and a.x and (well_value is None or a.well_value == well_value)
+        if a.x
+        and a.review_status in {"accepted", "rejected", "ambiguous"}
+        and (well_value is None or a.well_value == well_value)
     ]
-    if not annotated:
+    if not annotated and not reviewed_candidate_ids:
         return candidates
 
     def _overlaps(c: dict) -> bool:
+        candidate_id = c.get("candidate_id")
+        if candidate_id and candidate_id in reviewed_candidate_ids:
+            return True
         c_start = c.get("start", "") or ""
         c_end = c.get("end", c_start) or c_start
         for a_start, a_end in annotated:
@@ -344,31 +807,6 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
     local_result = infer_message_updates(user_message, state)
     local_updates = local_result.get("updates") or {}
 
-    state.selected_series = (
-        local_updates.get("selected_series")
-        or inferred_series
-        or state.selected_series
-        or payload.get("series")
-    )
-    state.selected_time_column = payload.get("time_column") or state.selected_time_column
-    state.selected_well_column = payload.get("well_column") or state.selected_well_column
-    state.selected_well_value = (
-        local_updates.get("selected_well_value")
-        or state.selected_well_value
-        or payload.get("well_value")
-    )
-    state.date_from = (
-        local_updates.get("date_from")
-        or inferred.get("date_from")
-        or state.date_from
-        or payload.get("date_from")
-    )
-    state.date_to = (
-        local_updates.get("date_to")
-        or inferred.get("date_to")
-        or state.date_to
-        or payload.get("date_to")
-    )
     state.anomaly_goal = (
         local_updates.get("anomaly_goal")
         or inferred.get("anomaly_goal")
@@ -392,13 +830,11 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
         state.statistical_threshold_pct = float(incoming_threshold)
     state.recommendation_mode = (
         local_updates.get("recommendation_mode")
-        or local_result.get("updates", {}).get("recommendation_mode")
         or inferred.get("recommendation_mode")
         or state.recommendation_mode
-        or payload.get("recommendation_mode")
     )
 
-    window_size = local_updates.get("window_size") or state.window_size or payload.get("window_size")
+    window_size = local_updates.get("window_size") or state.window_size
     if window_size in (None, ""):
         window_size = inferred.get("window_size")
     if window_size not in (None, ""):
@@ -453,6 +889,8 @@ async def get_plot(
     window_size: Optional[int] = None,
     statistical_threshold_pct: Optional[float] = None,
     recommendation_mode: Optional[str] = None,
+    use_scope_dates: bool = False,
+    detect_candidates: bool = False,
 ) -> JSONResponse:
     state = _get_session(session_id)
     df = _parse_state_dataframe(state)
@@ -467,8 +905,18 @@ async def get_plot(
         and state.profile.detected_multiple_wells
     ):
         resolved_well_value = _default_well_value(state, df)
-    resolved_date_from = date_from or state.date_from
-    resolved_date_to = date_to or state.date_to
+    scope_time_range = get_scope_time_range(
+        df=df,
+        time_column=resolved_time_column,
+        well_column=resolved_well_column,
+        well_value=resolved_well_value,
+    )
+    if use_scope_dates:
+        resolved_date_from = scope_time_range.get("time_min")
+        resolved_date_to = scope_time_range.get("time_max")
+    else:
+        resolved_date_from = date_from or state.date_from or scope_time_range.get("time_min")
+        resolved_date_to = date_to or state.date_to or scope_time_range.get("time_max")
     resolved_window_size = window_size if window_size is not None else state.window_size
     resolved_statistical_threshold_pct = (
         statistical_threshold_pct if statistical_threshold_pct is not None else state.statistical_threshold_pct
@@ -494,37 +942,39 @@ async def get_plot(
         date_to=resolved_date_to,
         series_names=resolved_series,
     )
-    scope_time_range = get_scope_time_range(
-        df=df,
-        time_column=resolved_time_column,
-        well_column=resolved_well_column,
-        well_value=resolved_well_value,
-    )
-    filtered_frame = filter_dataframe(
-        df=df,
-        time_column=resolved_time_column,
-        well_column=resolved_well_column,
-        well_value=resolved_well_value,
-        date_from=resolved_date_from,
-        date_to=resolved_date_to,
-    )
-    candidate_intervals = detect_candidate_intervals(
-        plot_payload=plot_payload,
-        anomaly_goal=state.anomaly_goal,
-        window_size=resolved_window_size,
-        statistical_threshold_pct=resolved_statistical_threshold_pct,
-    )
-    # Remove already-annotated intervals so the candidate list only shows unreviewed items
-    candidate_intervals = _filter_unannotated_candidates(
-        candidate_intervals, state.saved_annotations, resolved_well_value
-    )
-    candidate_interval_stats = analyze_candidate_intervals(
-        frame=filtered_frame,
-        time_column=resolved_time_column,
-        series_name=resolved_series[0] if resolved_series else None,
-        candidates=candidate_intervals,
-        with_ruptures=True,
-    )
+    candidate_intervals: list[dict[str, object]] = []
+    candidate_interval_stats: list[dict[str, object]] = []
+    if detect_candidates:
+        filtered_frame = filter_dataframe(
+            df=df,
+            time_column=resolved_time_column,
+            well_column=resolved_well_column,
+            well_value=resolved_well_value,
+            date_from=resolved_date_from,
+            date_to=resolved_date_to,
+        )
+        review_candidates = _build_review_candidates(
+            state,
+            df,
+            selected_series=resolved_series,
+            time_column=resolved_time_column,
+            well_column=resolved_well_column,
+            well_value=resolved_well_value,
+            window_size=resolved_window_size,
+            statistical_threshold_pct=resolved_statistical_threshold_pct,
+        )
+        candidate_intervals = _filter_unreviewed_candidates(
+            review_candidates,
+            state.saved_annotations,
+            resolved_well_value,
+        )
+        candidate_interval_stats = analyze_candidate_intervals(
+            frame=filtered_frame,
+            time_column=resolved_time_column,
+            series_name=resolved_series[0] if resolved_series else None,
+            candidates=candidate_intervals,
+            with_ruptures=True,
+        )
     if (
         not state.recommendation.x
         or state.recommendation.mode != resolved_recommendation_mode
@@ -555,6 +1005,9 @@ async def get_plot(
             "candidate_interval_stats": candidate_interval_stats,
             "recommendation": asdict(state.recommendation),
             "selected_well_value": resolved_well_value,
+            "resolved_date_from": resolved_date_from,
+            "resolved_date_to": resolved_date_to,
+            "candidates_computed": detect_candidates,
             "plot_warning": plot_warning,
             "scope_time_range": scope_time_range,
             "window_size": resolved_window_size,
@@ -569,6 +1022,7 @@ async def get_plot(
 async def set_recommendation(session_id: str, request: Request) -> JSONResponse:
     state = _get_session(session_id)
     payload = await request.json()
+    candidate = _find_review_candidate(state, payload.get("candidate_id"))
     state.recommendation = RecommendationPoint(
         mode=payload.get("mode", state.recommendation_mode),
         x=payload.get("x"),
@@ -580,10 +1034,14 @@ async def set_recommendation(session_id: str, request: Request) -> JSONResponse:
     state.recommendation_mode = state.recommendation.mode
     saved_annotation = None
     if state.recommendation.locked and state.recommendation.x:
+        review_action, final_label, review_status = _resolve_review_decision(state, payload, candidate)
         saved_annotation = _save_annotation(
             state,
-            label=payload.get("label"),
+            label=final_label,
             correction_reason=payload.get("correction_reason"),
+            review_action=review_action,
+            review_status=review_status,
+            candidate=candidate,
         )
     return JSONResponse(
         jsonable_encoder(
@@ -603,6 +1061,21 @@ async def update_annotation(session_id: str, annotation_id: str, request: Reques
     state = _get_session(session_id)
     _, annotation = _find_annotation(state, annotation_id)
     payload = await request.json()
+    candidate = _find_review_candidate(state, payload.get("candidate_id") or annotation.candidate_id)
+    if candidate is None and annotation.candidate_id:
+        candidate = {
+            "candidate_id": annotation.candidate_id,
+            "proposed_label": annotation.proposed_label,
+            "winning_rule": annotation.proposed_rule,
+            "routing": annotation.routing,
+            "source": annotation.candidate_source,
+            "deviation_type": annotation.deviation_type,
+            "deviation_score": annotation.deviation_score,
+            "rule_trace": annotation.rule_trace,
+            "local_features": annotation.local_features,
+            "explanation": annotation.explanation,
+        }
+    review_action, final_label, review_status = _resolve_review_decision(state, payload, candidate)
 
     annotation.recommendation_mode = payload.get("mode", annotation.recommendation_mode)
     annotation.x = payload.get("x")
@@ -615,10 +1088,52 @@ async def update_annotation(session_id: str, annotation_id: str, request: Reques
     annotation.window_size = state.window_size
     annotation.date_from = state.date_from
     annotation.date_to = state.date_to
-    if "label" in payload:
-        annotation.label = payload["label"] or None
-    if "correction_reason" in payload:
-        annotation.correction_reason = payload["correction_reason"] or None
+    annotation.label = final_label
+    annotation.correction_reason = payload.get("correction_reason") or None
+    annotation.candidate_id = (
+        str(candidate.get("candidate_id"))
+        if candidate and candidate.get("candidate_id")
+        else annotation.candidate_id
+    )
+    annotation.proposed_label = (
+        str(candidate.get("proposed_label"))
+        if candidate and candidate.get("proposed_label")
+        else annotation.proposed_label
+    )
+    annotation.proposed_rule = (
+        str(candidate.get("winning_rule"))
+        if candidate and candidate.get("winning_rule")
+        else annotation.proposed_rule
+    )
+    annotation.review_action = review_action
+    annotation.review_status = review_status
+    annotation.routing = (
+        str(candidate.get("routing"))
+        if candidate and candidate.get("routing")
+        else annotation.routing
+    )
+    annotation.candidate_source = (
+        str(candidate.get("source"))
+        if candidate and candidate.get("source")
+        else annotation.candidate_source
+    )
+    annotation.deviation_type = (
+        str(candidate.get("deviation_type"))
+        if candidate and candidate.get("deviation_type")
+        else annotation.deviation_type
+    )
+    annotation.deviation_score = (
+        float(candidate.get("deviation_score"))
+        if candidate and candidate.get("deviation_score") is not None
+        else annotation.deviation_score
+    )
+    annotation.explanation = (
+        str(candidate.get("explanation"))
+        if candidate and candidate.get("explanation")
+        else annotation.explanation
+    )
+    annotation.rule_trace = dict(candidate.get("rule_trace") or {}) if candidate else annotation.rule_trace
+    annotation.local_features = dict(candidate.get("local_features") or {}) if candidate else annotation.local_features
 
     state.recommendation = RecommendationPoint(
         mode=annotation.recommendation_mode,
@@ -655,6 +1170,7 @@ async def delete_annotation(session_id: str, annotation_id: str) -> JSONResponse
     if state.recommendation.locked and state.recommendation.x == annotation.x and state.recommendation.x_end == annotation.x_end:
         state.recommendation = RecommendationPoint(mode=state.recommendation_mode, locked=False)
     _persist_annotations(state)
+    _delete_from_task_memory(state, annotation_id)
     return JSONResponse(
         jsonable_encoder(
             {

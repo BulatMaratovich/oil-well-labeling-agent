@@ -77,7 +77,7 @@ class TaskSpec:
     )
     label_taxonomy: list[str] = field(
         default_factory=lambda: [
-            "candidate_deviation",
+            "belt_break",
             "planned_stop",
             "planned_maintenance",
             "sensor_issue",
@@ -120,7 +120,7 @@ class TaskSpec:
 
 @dataclass
 class RecommendationPoint:
-    mode: str = "point"
+    mode: str = "interval"
     x: Optional[str] = None
     y: Optional[float] = None
     x_end: Optional[str] = None
@@ -146,6 +146,18 @@ class SavedAnnotation:
     label: Optional[str] = None
     correction_reason: Optional[str] = None
     created_at: Optional[str] = None
+    candidate_id: Optional[str] = None
+    proposed_label: Optional[str] = None
+    proposed_rule: Optional[str] = None
+    review_action: Optional[str] = None
+    review_status: str = "accepted"
+    routing: Optional[str] = None
+    candidate_source: Optional[str] = None
+    deviation_type: Optional[str] = None
+    deviation_score: Optional[float] = None
+    explanation: Optional[str] = None
+    rule_trace: dict[str, Any] = field(default_factory=dict)
+    local_features: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -164,13 +176,15 @@ class SessionState:
     chart_preferences: Optional[str] = None
     window_size: Optional[int] = None
     statistical_threshold_pct: Optional[float] = None
-    recommendation_mode: str = "point"
+    recommendation_mode: str = "interval"
     recommendation: RecommendationPoint = field(default_factory=RecommendationPoint)
     saved_annotations: list[SavedAnnotation] = field(default_factory=list)
     annotations_path: Optional[str] = None
     task_spec: Optional[TaskSpec] = None
     task_spec_path: Optional[str] = None
     messages: list[dict[str, str]] = field(default_factory=list)
+    review_candidates: list[dict[str, Any]] = field(default_factory=list)
+    review_cache_key: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -194,4 +208,6 @@ class SessionState:
             "task_spec": self.task_spec,
             "task_spec_path": self.task_spec_path,
             "messages": self.messages,
+            "review_candidates": self.review_candidates,
+            "review_cache_key": self.review_cache_key,
         }

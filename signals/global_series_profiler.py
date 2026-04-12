@@ -128,6 +128,7 @@ def profile(
         asset_id=series.asset_id,
         regimes=regimes,
         no_regime_structure=no_structure,
+        signal_name=sig,
     )
 
 

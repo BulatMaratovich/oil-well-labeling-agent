@@ -72,6 +72,7 @@ class RegimeSequence:
     asset_id: str
     regimes: list[Regime] = field(default_factory=list)
     no_regime_structure: bool = False   # True when PELT found only 1 segment
+    signal_name: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,7 @@ class CandidateEvent:
                                # "full_series_review"
     deviation_score: float
     context_query: str         # free-text hint for context retrieval
+    series_name: Optional[str] = None
     preceding_regime_type: Optional[str] = None
     following_regime_type: Optional[str] = None
     flags: list[str] = field(default_factory=list)

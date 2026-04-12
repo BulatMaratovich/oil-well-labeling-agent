@@ -205,7 +205,7 @@ class PipelineRunner:
         for cand in result.candidates:
             # Use first series as fallback if trace_name not matched
             sig_series = series_by_signal.get(
-                getattr(cand, "series_name", None),
+                cand.series_name,
                 clean_series[0] if clean_series else None,
             )
             if sig_series is None:

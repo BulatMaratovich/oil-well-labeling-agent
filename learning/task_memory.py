@@ -144,6 +144,14 @@ class TaskMemory:
                 return True
         return False
 
+    def remove(self, record_id: str) -> bool:
+        before = len(self._records)
+        self._records = [rec for rec in self._records if rec.record_id != record_id]
+        if len(self._records) == before:
+            return False
+        self._save()
+        return True
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------

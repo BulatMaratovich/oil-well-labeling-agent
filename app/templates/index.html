@@ -592,7 +592,7 @@
       <section class="hero">
         <div>
           <h1>Labeling Review Surface</h1>
-          <p>Импортируйте файл, уточните ряды и критерии отклонений в discovery-диалоге, затем размечайте на review-surface: сверху детальные панели, снизу overview по времени, выбор разметки через устойчивый курсор по оси X.</p>
+          <p>Импортируйте файл, выберите скважину, период и ряды напрямую в интерфейсе, затем проверяйте review-очередь кандидатов: proposed label, rule trace, локальные признаки и итоговое решение reviewer.</p>
         </div>
         <div class="panel" style="padding: 14px 16px;">
           <div class="hint">LLM</div>
@@ -630,13 +630,13 @@
           </div>
 
           <div class="control-group">
-            <label for="chatInput">Сообщение discovery-ассистенту</label>
-            <textarea id="chatInput" placeholder="Например: показывай Активная мощность и Входное напряжение, ищи резкие провалы и зоны нестабильности, окно 20 минут."></textarea>
-            <button id="chatBtn">Отправить</button>
+            <label for="chatInput">Task assistant, опционально</label>
+            <textarea id="chatInput" placeholder="Например: считаем нормой стабильный цикл без длительных остановок; конфаундеры — planned_stop и sensor_issue; целевая метка — belt_break."></textarea>
+            <button id="chatBtn">Спросить</button>
           </div>
 
           <div class="card">
-            <div class="hint">Диалог</div>
+            <div class="hint">Диалог по задаче</div>
             <div class="chat" id="chatBox"></div>
           </div>
         </aside>
@@ -680,20 +680,20 @@
               <div class="control-group">
                 <label for="recommendationMode">Режим разметки</label>
                 <select id="recommendationMode">
-                  <option value="point">Точка</option>
                   <option value="interval">Интервал</option>
+                  <option value="point">Точка</option>
                 </select>
               </div>
               <div class="control-group">
                 <label>&nbsp;</label>
-                <button id="refreshPlotBtn" class="ghost">Обновить график</button>
+                <button id="refreshPlotBtn" class="ghost">Поиск кандидатов</button>
               </div>
             </div>
           </div>
 
           <!-- compact status bar -->
           <div class="status-bar">
-            <div class="chip" id="reviewModeChip">Режим: точка</div>
+            <div class="chip" id="reviewModeChip">Режим: интервал</div>
             <div class="chip" id="reviewWindowChip">Окно: 20</div>
             <div class="chip" id="activeWellChip" style="display:none"></div>
             <div class="chip" id="activeDateChip" style="display:none"></div>
@@ -714,15 +714,15 @@
 
               <!-- selection state -->
               <div class="selection-compact">
-                <span id="recommendationStatus" class="status">Точка не выбрана.</span>
+                <span id="recommendationStatus" class="status">Кандидат не выбран.</span>
                 <span id="recommendationDetails" class="status"></span>
               </div>
             </div>
 
             <!-- narrow right panel: candidates only -->
             <div class="candidates-panel">
-              <div class="hint">Кандидаты</div>
-              <div id="candidateIntervalsSummary" class="status" style="font-size:0.84rem;">Не построены.</div>
+              <div class="hint">Review Queue</div>
+              <div id="candidateIntervalsSummary" class="status" style="font-size:0.84rem;">Кандидаты ещё не рассчитаны.</div>
               <div id="candidateIntervalsList" class="candidate-list"></div>
             </div>
           </div>
@@ -734,22 +734,26 @@
             <div id="candidateStatsDetail" style="margin-top:4px;"></div>
           </div>
 
-          <!-- compact action bar: label + buttons in one row -->
+          <div class="card" id="reviewInspector">
+            <div class="hint">Разбор кандидата</div>
+            <div id="reviewInspectorSummary" class="status">Откройте кандидата из очереди справа.</div>
+            <div id="reviewInspectorExplanation" class="status" style="margin-top:8px;"></div>
+            <div id="reviewInspectorMeta" class="chip-row" style="margin-top:10px;"></div>
+            <div id="reviewInspectorRuleTrace" class="status" style="margin-top:10px;"></div>
+            <div id="reviewInspectorFeatures" class="status" style="margin-top:10px;"></div>
+          </div>
+
+          <!-- compact action bar: review actions -->
           <div class="action-bar">
             <select id="labelSelect">
-              <option value="">— метка —</option>
-              <option value="candidate_deviation">candidate_deviation ✓</option>
-              <option value="belt_break">belt_break</option>
-              <option value="planned_stop">planned_stop</option>
-              <option value="planned_maintenance">planned_maintenance</option>
-              <option value="sensor_issue">sensor_issue</option>
-              <option value="stable_unusual_regime">stable_unusual_regime</option>
-              <option value="unknown">unknown</option>
+              <option value="">— метка для override —</option>
             </select>
-            <input id="correctionReason" type="text" placeholder="причина отклонения или коррекции">
+            <input id="correctionReason" type="text" placeholder="причина override / reject / ambiguous">
             <div class="action-sep"></div>
-            <button id="confirmPointBtn">Точка ✓</button>
-            <button id="confirmIntervalBtn">Интервал ✓</button>
+            <button id="acceptCandidateBtn">Принять</button>
+            <button id="overrideCandidateBtn">Override</button>
+            <button id="ambiguousCandidateBtn" class="ghost">Неясно</button>
+            <button id="rejectCandidateBtn" class="secondary">Отклонить</button>
             <button id="undoSelectionBtn" class="secondary">Отменить</button>
             <button id="resetXRangeBtn" class="ghost">Весь X</button>
             <button id="resetRecommendationBtn" class="ghost">Сброс</button>
@@ -796,7 +800,7 @@
       let currentProfile = null;
       let latestPlotPayload = null;
       let latestWindowSize = 20;
-      let latestRecommendationMode = "point";
+      let latestRecommendationMode = "interval";
       let suggestedRecommendation = null;
       let currentRecommendation = null;
       let pendingRecommendation = null;
@@ -808,6 +812,9 @@
       let latestCandidateIntervals = [];
       let latestCandidateIntervalStats = [];
       let activeCandidateIndex = null;
+      let latestCandidatesComputed = false;
+      let isCandidateSearchPending = false;
+      let latestPlotRequestId = 0;
       let isChatPending = false;
       let latestPlotWarning = null;
       let latestTaskSpecLabelTaxonomy = [];
@@ -827,8 +834,10 @@
       const statisticalThresholdPct = document.getElementById("statisticalThresholdPct");
       const recommendationMode = document.getElementById("recommendationMode");
       const refreshPlotBtn = document.getElementById("refreshPlotBtn");
-      const confirmPointBtn = document.getElementById("confirmPointBtn");
-      const confirmIntervalBtn = document.getElementById("confirmIntervalBtn");
+      const acceptCandidateBtn = document.getElementById("acceptCandidateBtn");
+      const overrideCandidateBtn = document.getElementById("overrideCandidateBtn");
+      const ambiguousCandidateBtn = document.getElementById("ambiguousCandidateBtn");
+      const rejectCandidateBtn = document.getElementById("rejectCandidateBtn");
       const undoSelectionBtn = document.getElementById("undoSelectionBtn");
       const resetXRangeBtn = document.getElementById("resetXRangeBtn");
       const resetRecommendationBtn = document.getElementById("resetRecommendationBtn");
@@ -863,6 +872,13 @@
         if (_bannerTimer) clearTimeout(_bannerTimer);
         _bannerTimer = setTimeout(() => { plotUpdateBanner.style.display = "none"; }, 4000);
       }
+
+      function updateCandidateSearchButton() {
+        refreshPlotBtn.disabled = !sessionId || isCandidateSearchPending;
+        refreshPlotBtn.textContent = isCandidateSearchPending
+          ? "Идет расчет..."
+          : "Поиск кандидатов";
+      }
       const cursorSlider = document.getElementById("cursorSlider");
       const cursorValue = document.getElementById("cursorValue");
       const recommendationStatus = document.getElementById("recommendationStatus");
@@ -877,6 +893,11 @@
       const candidateIntervalsList = document.getElementById("candidateIntervalsList");
       const candidateStatsSummary = document.getElementById("candidateStatsSummary");
       const candidateStatsDetail = document.getElementById("candidateStatsDetail");
+      const reviewInspectorSummary = document.getElementById("reviewInspectorSummary");
+      const reviewInspectorExplanation = document.getElementById("reviewInspectorExplanation");
+      const reviewInspectorMeta = document.getElementById("reviewInspectorMeta");
+      const reviewInspectorRuleTrace = document.getElementById("reviewInspectorRuleTrace");
+      const reviewInspectorFeatures = document.getElementById("reviewInspectorFeatures");
 
       function getSelectedSeries() {
         return Array.from(seriesSelect.selectedOptions).map(option => option.value);
@@ -950,6 +971,16 @@
         return shifted.toISOString().slice(0, 16);
       }
 
+      function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, char => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        }[char]));
+      }
+
       function formatNumber(value) {
         if (value === null || value === undefined || Number.isNaN(Number(value))) return "n/a";
         return Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 4 });
@@ -962,6 +993,48 @@
       function formatPercent(value) {
         if (value === null || value === undefined || Number.isNaN(Number(value))) return "n/a";
         return `${(Number(value) * 100).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`;
+      }
+
+      function formatStamp(value) {
+        if (!value) return "n/a";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return date.toLocaleString("ru-RU", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+
+      function formatRouting(value) {
+        if (value === "mandatory_review") return "обязательный review";
+        if (value === "review") return "review";
+        if (value === "auto_label") return "auto-label";
+        return value || "review";
+      }
+
+      function formatReviewStatus(value) {
+        if (value === "accepted") return "accepted";
+        if (value === "rejected") return "rejected";
+        if (value === "ambiguous") return "ambiguous";
+        return value || "draft";
+      }
+
+      function formatReviewAction(value) {
+        if (value === "accept") return "accept";
+        if (value === "override") return "override";
+        if (value === "reject") return "reject";
+        if (value === "ambiguous") return "ambiguous";
+        return value || "";
+      }
+
+      function formatCandidateWindow(item) {
+        if (!item) return "n/a";
+        const start = item.start || item.x;
+        const end = item.end || item.x_end || start;
+        return `${formatStamp(start)} .. ${formatStamp(end)}`;
       }
 
       function getVisibleSeries(plot) {
@@ -1014,12 +1087,74 @@
           recommendation.x,
           recommendation.x_end || "",
           recommendation.trace_name || "",
+          recommendation.candidate_id || "",
           recommendation.locked ? "locked" : "pending"
         ].join("|");
       }
 
       function getDisplayedRecommendation() {
         return pendingRecommendation || currentRecommendation || suggestedRecommendation || null;
+      }
+
+      function buildSelectionFromCandidate(candidate) {
+        if (!candidate) return null;
+        return {
+          mode: "interval",
+          x: candidate.start,
+          x_end: candidate.end || candidate.start,
+          y: null,
+          trace_name: candidate.series_name || getPrimaryTrace(latestPlotPayload)?.name || null,
+          candidate_id: candidate.candidate_id || null,
+          locked: false,
+        };
+      }
+
+      function buildSelectionFromAnnotation(annotation) {
+        if (!annotation?.x) return null;
+        return {
+          mode: annotation.recommendation_mode || "interval",
+          x: annotation.x,
+          x_end: annotation.x_end,
+          y: annotation.y,
+          trace_name: annotation.trace_name,
+          candidate_id: annotation.candidate_id || null,
+          locked: true,
+        };
+      }
+
+      function getEditingAnnotation() {
+        return editingAnnotationId ? findAnnotation(editingAnnotationId) : null;
+      }
+
+      function getActiveCandidate() {
+        const preferredCandidateId = pendingRecommendation?.candidate_id
+          || currentRecommendation?.candidate_id
+          || suggestedRecommendation?.candidate_id;
+        if (preferredCandidateId) {
+          const byId = latestCandidateIntervals.find(item => item.candidate_id === preferredCandidateId);
+          if (byId) return byId;
+        }
+        if (activeCandidateIndex !== null && latestCandidateIntervals[activeCandidateIndex]) {
+          return latestCandidateIntervals[activeCandidateIndex];
+        }
+        return latestCandidateIntervals[0] || null;
+      }
+
+      function getReviewSelection() {
+        const displayed = getDisplayedRecommendation();
+        if (displayed?.x) return displayed;
+        const activeCandidate = getActiveCandidate();
+        if (activeCandidate) return buildSelectionFromCandidate(activeCandidate);
+        return buildSelectionFromAnnotation(getEditingAnnotation());
+      }
+
+      function getReviewCandidateId() {
+        const displayed = getDisplayedRecommendation();
+        if (displayed?.candidate_id) return displayed.candidate_id;
+        const activeCandidate = getActiveCandidate();
+        if (activeCandidate?.candidate_id) return activeCandidate.candidate_id;
+        const annotation = getEditingAnnotation();
+        return annotation?.candidate_id || null;
       }
 
       function buildPendingFromIndex(index) {
@@ -1038,6 +1173,7 @@
             x_end: bounds?.end || centerX,
             y: centerY,
             trace_name: primaryTrace.name,
+            candidate_id: null,
             locked: false
           };
         }
@@ -1048,6 +1184,7 @@
           x_end: null,
           y: centerY,
           trace_name: primaryTrace.name,
+          candidate_id: null,
           locked: false
         };
       }
@@ -1066,6 +1203,17 @@
         return `${state}: ${selectionCoords(recommendation)}`;
       }
 
+      function updateActionButtons() {
+        const selection = getReviewSelection();
+        const hasSelection = Boolean(selection?.x);
+        const hasCandidate = Boolean(getReviewCandidateId());
+        acceptCandidateBtn.disabled = !(hasSelection && hasCandidate);
+        rejectCandidateBtn.disabled = !(hasSelection && hasCandidate);
+        ambiguousCandidateBtn.disabled = !(hasSelection && hasCandidate);
+        overrideCandidateBtn.disabled = !(hasSelection && labelSelect.value);
+        undoSelectionBtn.disabled = !pendingRecommendation;
+      }
+
       function updateAnnotationsTable(items = [], path = "") {
         latestAnnotations = items;
         if (editingAnnotationId && !items.some(item => item.annotation_id === editingAnnotationId)) {
@@ -1074,6 +1222,8 @@
         annotationsPath.textContent = path ? `Файл разметки: ${path}` : "";
         if (!items.length) {
           annotationsTableBody.innerHTML = '<tr><td colspan="7">Пока нет сохранённых разметок.</td></tr>';
+          updateActionButtons();
+          updateReviewInspector();
           return;
         }
 
@@ -1083,18 +1233,26 @@
             : `${item.x || ""}${item.y !== null && item.y !== undefined ? `, y=${formatNumber(item.y)}` : ""}`;
           const activeClass = item.annotation_id === editingAnnotationId ? "active-row" : "";
           const labelText = item.label
-            ? `<span style="font-weight:600;color:var(--accent)">${item.label}</span>`
+            ? `<span style="font-weight:600;color:var(--accent)">${escapeHtml(item.label)}</span>`
             : `<span style="color:var(--muted)">—</span>`;
-          const reasonText = item.correction_reason
-            ? `<span style="color:var(--muted);font-size:0.85em">${item.correction_reason}</span>`
+          const proposedText = item.proposed_label
+            ? `<span style="color:var(--muted);font-size:0.85em">proposed: ${escapeHtml(item.proposed_label)}</span>`
             : "";
+          const reasonParts = [
+            item.correction_reason ? `<span style="color:var(--muted);font-size:0.85em">${escapeHtml(item.correction_reason)}</span>` : "",
+            proposedText,
+          ].filter(Boolean).join("<br>");
+          const actionMeta = [
+            formatReviewStatus(item.review_status),
+            formatReviewAction(item.review_action),
+          ].filter(Boolean).join(" · ");
           return `<tr class="${activeClass}">
             <td>${item.created_at ? item.created_at.slice(0, 19).replace("T", " ") : ""}</td>
-            <td>${item.recommendation_mode === "interval" ? "Интервал" : "Точка"}</td>
+            <td>${item.recommendation_mode === "interval" ? "Интервал" : "Точка"}${actionMeta ? `<div class="stats-note">${escapeHtml(actionMeta)}</div>` : ""}</td>
             <td>${labelText}</td>
-            <td>${reasonText}</td>
-            <td>${coords}</td>
-            <td>${item.trace_name || item.series?.[0] || ""}</td>
+            <td>${reasonParts}</td>
+            <td>${escapeHtml(coords)}</td>
+            <td>${escapeHtml(item.trace_name || item.series?.[0] || "")}</td>
             <td>
               <div class="mini-actions">
                 <button class="mini-action" data-action="edit" data-id="${item.annotation_id}">Открыть</button>
@@ -1103,9 +1261,12 @@
             </td>
           </tr>`;
         }).join("");
+        updateActionButtons();
+        updateReviewInspector();
       }
 
       function getActiveCandidateStats() {
+        if (!latestCandidatesComputed) return null;
         if (!latestCandidateIntervalStats.length) return null;
         const preferredIndex = activeCandidateIndex ?? 0;
         return latestCandidateIntervalStats.find(item => Number(item.candidate_index) === Number(preferredIndex))
@@ -1204,9 +1365,118 @@
         });
       }
 
+      function buildRuleTraceHtml(trace = {}) {
+        const parts = [];
+        if (trace.winning_rule) parts.push(`winning_rule=${trace.winning_rule}`);
+        if (trace.abstain_reason) parts.push(`abstain=${trace.abstain_reason}`);
+        if (trace.conflict) parts.push("conflict=yes");
+        if (Array.isArray(trace.rules_fired) && trace.rules_fired.length) {
+          parts.push(`fired=${trace.rules_fired.join(", ")}`);
+        }
+        if (Array.isArray(trace.rules_blocked) && trace.rules_blocked.length) {
+          parts.push(`blocked=${trace.rules_blocked.join(", ")}`);
+        }
+        if (Array.isArray(trace.rules_evaluated) && trace.rules_evaluated.length) {
+          parts.push(`evaluated=${trace.rules_evaluated.join(", ")}`);
+        }
+        if (!parts.length) {
+          return "Rule trace: нет данных.";
+        }
+        return `Rule trace: ${escapeHtml(parts.join(" · "))}`;
+      }
+
+      function buildFeaturesHtml(features = {}) {
+        const visibleEntries = Object.entries(features || {}).filter(([key, value]) => {
+          if (key === "candidate_id") return false;
+          return value !== null && value !== undefined && value !== "";
+        });
+        if (!visibleEntries.length) {
+          return "Local features: нет данных.";
+        }
+        const rendered = visibleEntries.map(([key, value]) => {
+          const normalized = typeof value === "number" ? formatNumber(value) : String(value);
+          return `${key}=${normalized}`;
+        });
+        return `Local features: ${escapeHtml(rendered.join(" · "))}`;
+      }
+
+      function updateReviewInspector() {
+        const annotation = getEditingAnnotation();
+        const candidate = annotation ? null : getActiveCandidate();
+        const subject = candidate || annotation;
+        if (!subject) {
+          reviewInspectorSummary.textContent = latestCandidatesComputed
+            ? "Откройте кандидата из очереди справа."
+            : "Сначала постройте график и запустите поиск кандидатов.";
+          reviewInspectorExplanation.textContent = "";
+          reviewInspectorMeta.innerHTML = "";
+          reviewInspectorRuleTrace.textContent = "";
+          reviewInspectorFeatures.textContent = "";
+          return;
+        }
+
+        const isCandidate = Boolean(candidate);
+        const proposedLabel = isCandidate
+          ? candidate.proposed_label || "unknown"
+          : annotation.label || annotation.proposed_label || "unknown";
+        const explanation = isCandidate
+          ? candidate.explanation
+          : annotation.explanation;
+        const meta = isCandidate
+          ? [
+              `proposed: ${proposedLabel}`,
+              candidate.series_name ? `ряд: ${candidate.series_name}` : "",
+              `routing: ${formatRouting(candidate.routing)}`,
+              candidate.source ? `source: ${candidate.source}` : "",
+              candidate.deviation_score !== null && candidate.deviation_score !== undefined
+                ? `score: ${formatNumber(candidate.deviation_score)}`
+                : "",
+              candidate.confidence !== null && candidate.confidence !== undefined
+                ? `confidence: ${formatPercent(candidate.confidence)}`
+                : "",
+            ]
+          : [
+              `label: ${proposedLabel}`,
+              annotation.trace_name ? `ряд: ${annotation.trace_name}` : "",
+              `status: ${formatReviewStatus(annotation.review_status)}`,
+              annotation.review_action ? `action: ${formatReviewAction(annotation.review_action)}` : "",
+              annotation.candidate_source ? `source: ${annotation.candidate_source}` : "",
+            ];
+        const flags = isCandidate && Array.isArray(candidate.flags) ? candidate.flags : [];
+
+        reviewInspectorSummary.textContent = isCandidate
+          ? `Кандидат: ${formatCandidateWindow(candidate)}`
+          : `Сохранённая разметка: ${formatCandidateWindow(annotation)}`;
+        reviewInspectorExplanation.textContent = explanation
+          ? explanation
+          : isCandidate
+            ? `Система предлагает метку ${proposedLabel}. Проверьте границы и выберите review-action.`
+            : "Открыта сохранённая разметка для редактирования.";
+        reviewInspectorMeta.innerHTML = [
+          ...meta.filter(Boolean),
+          ...flags.map(flag => `flag: ${flag}`),
+        ].map(item => `<span class="chip">${escapeHtml(item)}</span>`).join("");
+        reviewInspectorRuleTrace.innerHTML = buildRuleTraceHtml(
+          isCandidate ? candidate.rule_trace : annotation.rule_trace
+        );
+        reviewInspectorFeatures.innerHTML = buildFeaturesHtml(
+          isCandidate ? candidate.local_features : annotation.local_features
+        );
+      }
+
       function updateCandidateIntervals(items = [], stats = []) {
         latestCandidateIntervals = items || [];
         latestCandidateIntervalStats = stats || [];
+
+        if (!latestCandidatesComputed) {
+          activeCandidateIndex = null;
+          candidateIntervalsSummary.textContent = "Кандидаты ещё не рассчитаны. Нажмите «Поиск кандидатов».";
+          candidateIntervalsList.innerHTML = "";
+          updateCandidateStats();
+          updateReviewInspector();
+          updateActionButtons();
+          return;
+        }
 
         const displayItems = getFilteredCandidates();
 
@@ -1214,32 +1484,47 @@
           activeCandidateIndex = null;
           const total = latestCandidateIntervals.length;
           candidateIntervalsSummary.textContent = total > 0
-            ? `${total} кандидат(ов) найдено, но вне выбранного диапазона дат.`
-            : "Кандидаты не найдены для текущего фильтра или типа отклонения.";
+            ? `${total} кандидат(ов) в очереди, но вне выбранного диапазона дат.`
+            : "Очередь кандидатов пуста для текущих фильтров.";
           candidateIntervalsList.innerHTML = "";
           updateCandidateStats();
+          updateReviewInspector();
+          updateActionButtons();
           return;
         }
 
-        if (activeCandidateIndex === null || !latestCandidateIntervals[activeCandidateIndex]) {
+        const visibleIndexes = new Set(displayItems.map(item => item._origIdx));
+        if (activeCandidateIndex === null || !visibleIndexes.has(activeCandidateIndex)) {
           activeCandidateIndex = displayItems[0]._origIdx;
         }
 
         const isFiltered = displayItems.length < latestCandidateIntervals.length;
         candidateIntervalsSummary.textContent = isFiltered
-          ? `Показано ${displayItems.length} из ${latestCandidateIntervals.length} кандидат(ов).`
-          : `Найдено candidate intervals: ${latestCandidateIntervals.length}.`;
+          ? `Показано ${displayItems.length} из ${latestCandidateIntervals.length} кандидатов в review queue.`
+          : `В review queue: ${latestCandidateIntervals.length} кандидат(ов).`;
 
         candidateIntervalsList.innerHTML = displayItems.map(item => `
           <div class="candidate-item ${item._origIdx === activeCandidateIndex ? "active" : ""}">
             <div class="candidate-item-row">
               <strong>#${item._origIdx + 1}</strong>
-              <button class="mini-action" data-candidate-index="${item._origIdx}">Открыть</button>
+              <button class="mini-action" data-candidate-index="${item._origIdx}">${item._origIdx === activeCandidateIndex ? "Фокус" : "Открыть"}</button>
             </div>
-            <div class="candidate-meta">score ${item.score} · ${item.reason || "amplitude_change"}</div>
+            <div class="candidate-meta">${escapeHtml(formatCandidateWindow(item))}</div>
+            <div class="candidate-meta">proposed ${escapeHtml(item.proposed_label || "unknown")} · ${escapeHtml(formatRouting(item.routing))}</div>
+            <div class="candidate-meta">${escapeHtml([
+              item.series_name ? `ряд ${item.series_name}` : "",
+              item.source ? item.source : "",
+              item.deviation_score !== null && item.deviation_score !== undefined
+                ? `score ${formatNumber(item.deviation_score)}`
+                : item.score !== null && item.score !== undefined
+                  ? `score ${formatNumber(item.score)}`
+                  : "",
+            ].filter(Boolean).join(" · "))}</div>
           </div>
         `).join("");
         updateCandidateStats();
+        updateReviewInspector();
+        updateActionButtons();
       }
 
       const learningPanel = document.getElementById("learningPanel");
@@ -1320,24 +1605,38 @@
       }
 
       function updateStatus() {
-        const displayed = getDisplayedRecommendation();
+        const displayed = getReviewSelection();
+        const activeCandidate = getActiveCandidate();
         reviewModeChip.textContent = `Режим: ${formatMode(latestRecommendationMode)}`;
         reviewWindowChip.textContent = `Окно: ${latestWindowSize || "n/a"}`;
         editingStatus.textContent = editingAnnotationId
-          ? "Редактирование: следующее подтверждение обновит выбранную сохранённую запись."
-          : "Новая разметка: следующее подтверждение создаст новую запись.";
+          ? "Редактирование: следующее действие обновит выбранную сохранённую запись."
+          : "Новая разметка: review-action создаст новую запись.";
         clearEditingBtn.disabled = !editingAnnotationId;
 
         if (displayed?.mode === "interval" && displayed.x && displayed.x_end) {
-          recommendationStatus.textContent = displayed.locked
-            ? "Интервал зафиксирован."
+          recommendationStatus.textContent = editingAnnotationId
+            ? "Открыта сохранённая разметка."
             : pendingRecommendation
-              ? "Подготовлен интервал к фиксации."
-              : "Есть предварительный интервал.";
-          recommendationDetails.textContent = buildSelectionText(displayed);
+              ? "Границы интервала готовы к отправке."
+              : activeCandidate
+                ? "Активный кандидат открыт."
+                : displayed.locked
+                  ? "Интервал зафиксирован."
+                  : "Есть предварительный интервал.";
+          recommendationDetails.textContent = activeCandidate
+            ? `${buildSelectionText(displayed)} · proposed ${activeCandidate.proposed_label || "unknown"}`
+            : buildSelectionText(displayed);
           surfaceStatus.textContent = pendingRecommendation
-            ? "Нижний overview сохраняет временной контекст, а shaded window показывает активный интервал."
-            : "Интервал виден сразу на детальных панелях и на overview.";
+            ? "Уточните границы интервала при необходимости, затем выберите review-action."
+            : editingAnnotationId
+              ? "Открыта сохранённая разметка. При подтверждении запись будет обновлена."
+            : activeCandidate
+              ? "Система предлагает кандидата на интервале. Проверьте explanation и rule trace ниже."
+              : latestPlotPayload
+                ? "График обновлён. Для поиска очереди запустите «Поиск кандидатов»."
+              : "Интервал виден на детальных панелях и на overview.";
+          updateActionButtons();
           return;
         }
 
@@ -1345,18 +1644,22 @@
           recommendationStatus.textContent = displayed.locked
             ? "Точка зафиксирована."
             : pendingRecommendation
-              ? "Подготовлена точка к фиксации."
+              ? "Подготовлена точка к отправке."
               : "Есть предварительная точка.";
           recommendationDetails.textContent = buildSelectionText(displayed);
           surfaceStatus.textContent = pendingRecommendation
-            ? "Окно вокруг точки видно на всей review-surface и не пропадает при смене X-диапазона."
+            ? "Точка используется как ручная аннотация или onset внутри интервала."
             : "Можно двигаться по времени курсором и сразу видеть окно рекомендации.";
+          updateActionButtons();
           return;
         }
 
-        recommendationStatus.textContent = "Рекомендационная точка не выбрана.";
+        recommendationStatus.textContent = "Кандидат не выбран.";
         recommendationDetails.textContent = "Пока ничего не зафиксировано.";
-        surfaceStatus.textContent = "Загрузите файл и выберите ряд.";
+        surfaceStatus.textContent = latestPlotPayload
+          ? "График обновлён. Нажмите «Поиск кандидатов», когда будете готовы."
+          : "Загрузите файл и выберите ряд.";
+        updateActionButtons();
       }
 
       function buildPointLabel(recommendation) {
@@ -1630,11 +1933,7 @@
         updateStatus();
         const plot = latestPlotPayload;
         const plotNode = document.getElementById("plot");
-        const activeRecommendation = getDisplayedRecommendation();
-
-        confirmPointBtn.disabled = !(pendingRecommendation && pendingRecommendation.mode === "point" && pendingRecommendation.x);
-        confirmIntervalBtn.disabled = !(pendingRecommendation && pendingRecommendation.mode === "interval" && pendingRecommendation.x && pendingRecommendation.x_end);
-        undoSelectionBtn.disabled = !pendingRecommendation;
+        const activeRecommendation = getReviewSelection();
 
         if (!plot || !getVisibleSeries(plot).length) {
           Plotly.purge(plotNode);
@@ -1642,6 +1941,8 @@
           updateCursorControl(null, null);
           updateCandidateIntervals([], []);
           surfaceStatus.textContent = sessionId ? "Нет данных для выбранных фильтров." : "Загрузите файл и выберите ряд.";
+          updateReviewInspector();
+          updateActionButtons();
           return;
         }
 
@@ -1689,7 +1990,7 @@
 
         windowSize.value = defaults.window_size || 20;
         statisticalThresholdPct.value = defaults.statistical_threshold_pct || "";
-        recommendationMode.value = defaults.recommendation_mode || "point";
+        recommendationMode.value = defaults.recommendation_mode || "interval";
         dateFrom.value = formatDatetimeLocal(defaults.date_from);
         dateTo.value = formatDatetimeLocal(defaults.date_to);
         reviewModeChip.textContent = `Режим: ${formatMode(recommendationMode.value)}`;
@@ -1749,6 +2050,7 @@
         latestCandidateIntervals = [];
         latestCandidateIntervalStats = [];
         activeCandidateIndex = null;
+        latestCandidatesComputed = false;
         chatBox.innerHTML = "";
 
         populateProfile(data.profile, data.defaults);
@@ -1756,7 +2058,8 @@
           updateLabelSelect(data.task_spec.label_taxonomy);
         }
         data.messages.forEach(item => appendMessage(item.role, item.content));
-        await refreshPlot({ allowInitialWellSelection: true });
+        await refreshPlot({ allowInitialWellSelection: true, useScopeDates: true });
+        updateCandidateSearchButton();
         refreshLearning();
       }
 
@@ -1772,12 +2075,6 @@
         try {
           const payload = {
             message,
-            series: getSelectedSeries(),
-            time_column: timeColumn.value,
-            well_column: wellColumn.value,
-            well_value: wellValue.value,
-            date_from: dateFrom.value,
-            date_to: dateTo.value,
             anomaly_goal: message,
             chart_preferences: message,
             window_size: windowSize.value,
@@ -1799,23 +2096,11 @@
           appendMessage("user", message);
           appendMessage("assistant", data.reply);
           if (data.state) {
-            if (data.state.selected_series) {
-              fillMultiSelect(seriesSelect, currentProfile?.numeric_candidates || [], data.state.selected_series);
-            }
-            if (data.state.selected_well_value) {
-              wellValue.value = data.state.selected_well_value;
-            }
-            // Always sync dates from server state — even if only one side changed
-            if (data.state.date_from) dateFrom.value = formatDatetimeLocal(data.state.date_from);
-            else if (data.state.date_from === null) dateFrom.value = "";
-            if (data.state.date_to) dateTo.value = formatDatetimeLocal(data.state.date_to);
-            else if (data.state.date_to === null) dateTo.value = "";
             if (data.state.statistical_threshold_pct !== null && data.state.statistical_threshold_pct !== undefined) {
               statisticalThresholdPct.value = data.state.statistical_threshold_pct;
             }
             if (data.state.recommendation_mode) recommendationMode.value = data.state.recommendation_mode;
             if (data.state.window_size) windowSize.value = data.state.window_size;
-            updateActiveFilterChips(data.state);
           }
           if (data.task_spec?.label_taxonomy?.length) {
             updateLabelSelect(data.task_spec.label_taxonomy);
@@ -1826,129 +2111,184 @@
           await refreshPlot();
 
           if (readyForPass) {
-            const well = data.state?.selected_well_value ? `скв. ${data.state.selected_well_value}` : "";
-            const df = data.state?.date_from ? data.state.date_from.slice(0,10) : "";
-            const dt = data.state?.date_to ? data.state.date_to.slice(0,10) : "";
+            const well = wellValue.value ? `скв. ${wellValue.value}` : "";
+            const df = dateFrom.value ? dateFrom.value.slice(0,10) : "";
+            const dt = dateTo.value ? dateTo.value.slice(0,10) : "";
             const period = (df || dt) ? ` · ${df}–${dt}` : "";
             flashPlotBanner(`✓ График обновлён${well ? " · " + well : ""}${period}`);
-            appendMessage("system", "Параметры применены. График обновлён. Можно разметчать.");
-            chatInput.placeholder = "Уточнить параметры...";
+            appendMessage("system", "Параметры применены. График обновлён. Если нужен review queue, нажмите «Поиск кандидатов».");
+            chatInput.placeholder = "Уточнить задачу, правила или confounders...";
           }
         } finally {
           isChatPending = false;
           chatBtn.disabled = false;
-          chatBtn.textContent = "Отправить";
+          chatBtn.textContent = "Спросить";
           chatInput.disabled = false;
         }
       }
 
       async function refreshPlot(options = {}) {
         if (!sessionId) return;
+        const requestId = ++latestPlotRequestId;
+        const detectCandidates = Boolean(options.detectCandidates);
+        if (detectCandidates) {
+          isCandidateSearchPending = true;
+          candidateIntervalsSummary.textContent = "Идет расчет кандидатов...";
+          candidateIntervalsList.innerHTML = "";
+          updateCandidateSearchButton();
+        }
 
         const params = new URLSearchParams();
         if (timeColumn.value) params.set("time_column", timeColumn.value);
         if (wellColumn.value) params.set("well_column", wellColumn.value);
         if (wellValue.value) params.set("well_value", wellValue.value);
-        if (dateFrom.value) params.set("date_from", dateFrom.value);
-        if (dateTo.value) params.set("date_to", dateTo.value);
+        if (options.useScopeDates) {
+          params.set("use_scope_dates", "true");
+        } else {
+          if (dateFrom.value) params.set("date_from", dateFrom.value);
+          if (dateTo.value) params.set("date_to", dateTo.value);
+        }
         const seriesJoined = getSelectedSeries().join(",");
         if (seriesJoined) params.set("series", seriesJoined);
         if (windowSize.value !== "" && windowSize.value !== null) params.set("window_size", windowSize.value);
         if (statisticalThresholdPct.value !== "" && statisticalThresholdPct.value !== null) params.set("statistical_threshold_pct", statisticalThresholdPct.value);
         if (recommendationMode.value) params.set("recommendation_mode", recommendationMode.value);
+        if (detectCandidates) params.set("detect_candidates", "true");
 
-        const response = await fetch(`/api/plot/${sessionId}?${params.toString()}`);
-        const data = await response.json();
-        if (!response.ok) {
-          alert(detailText(data.detail, "Ошибка графика"));
-          return;
-        }
+        try {
+          const response = await fetch(`/api/plot/${sessionId}?${params.toString()}`);
+          const data = await response.json();
+          if (requestId !== latestPlotRequestId) {
+            return;
+          }
+          if (!response.ok) {
+            alert(detailText(data.detail, "Ошибка графика"));
+            return;
+          }
 
-        latestPlotWarning = data.plot_warning || null;
-        if (data.statistical_threshold_pct !== null && data.statistical_threshold_pct !== undefined) {
-          statisticalThresholdPct.value = data.statistical_threshold_pct;
-        }
+          latestPlotWarning = data.plot_warning || null;
+          latestCandidatesComputed = Boolean(data.candidates_computed);
+          if (data.statistical_threshold_pct !== null && data.statistical_threshold_pct !== undefined) {
+            statisticalThresholdPct.value = data.statistical_threshold_pct;
+          }
+          if (data.resolved_date_from !== undefined) {
+            dateFrom.value = formatDatetimeLocal(data.resolved_date_from);
+          }
+          if (data.resolved_date_to !== undefined) {
+            dateTo.value = formatDatetimeLocal(data.resolved_date_to);
+          }
 
-        if ((data.plot?.row_count || 0) === 0 && latestPlotPayload) {
+          if ((data.plot?.row_count || 0) === 0 && latestPlotPayload) {
+            if (data.selected_well_value) {
+              fillSingleSelect(wellValue, data.plot.well_values || [], data.selected_well_value, true);
+              wellValue.value = data.selected_well_value;
+            }
+            updateActiveFilterChips({
+              selected_well_value: wellValue.value,
+              date_from: dateFrom.value,
+              date_to: dateTo.value,
+            });
+            surfaceStatus.textContent = latestPlotWarning || "Для выбранных фильтров данных не найдено.";
+            return;
+          }
+
+          latestPlotPayload = data.plot;
+          latestCandidateIntervals = data.candidate_intervals || [];
+          latestCandidateIntervalStats = data.candidate_interval_stats || [];
+          latestWindowSize = Number(data.window_size || 20);
+          latestRecommendationMode = data.recommendation_mode || "interval";
+          reviewModeChip.textContent = `Режим: ${formatMode(latestRecommendationMode)}`;
+          reviewWindowChip.textContent = `Окно: ${latestWindowSize || "n/a"}`;
+
+          const requestedWell = wellValue.value;
+          fillSingleSelect(wellValue, data.plot.well_values || [], requestedWell, true);
           if (data.selected_well_value) {
-            fillSingleSelect(wellValue, data.plot.well_values || [], data.selected_well_value, true);
             wellValue.value = data.selected_well_value;
           }
-          surfaceStatus.textContent = latestPlotWarning || "Для выбранных фильтров данных не найдено.";
-          return;
-        }
+          updateActiveFilterChips({
+            selected_well_value: wellValue.value,
+            date_from: dateFrom.value,
+            date_to: dateTo.value,
+          });
 
-        latestPlotPayload = data.plot;
-        latestCandidateIntervals = data.candidate_intervals || [];
-        latestCandidateIntervalStats = data.candidate_interval_stats || [];
-        latestWindowSize = Number(data.window_size || 20);
-        latestRecommendationMode = data.recommendation_mode || "point";
-        reviewModeChip.textContent = `Режим: ${formatMode(latestRecommendationMode)}`;
-        reviewWindowChip.textContent = `Окно: ${latestWindowSize || "n/a"}`;
-
-        const requestedWell = wellValue.value;
-        fillSingleSelect(wellValue, data.plot.well_values || [], requestedWell, true);
-        if (data.selected_well_value) {
-          wellValue.value = data.selected_well_value;
-        }
-        if (
-          options.allowInitialWellSelection &&
-          !wellValue.value &&
-          wellValue.options.length > 1
-        ) {
-          wellValue.value = wellValue.options[1].value;
-          await refreshPlot({ allowInitialWellSelection: false });
-          return;
-        }
-
-        pendingRecommendation = null;
-        suggestedRecommendation = data.recommendation && !data.recommendation.locked && data.recommendation.x
-          ? data.recommendation
-          : null;
-        currentRecommendation = data.recommendation && data.recommendation.locked
-          ? data.recommendation
-          : null;
-        if (options.focusAnnotation) {
-          currentRecommendation = { ...options.focusAnnotation, locked: true };
-          suggestedRecommendation = null;
-        }
-
-        updateAnnotationsTable(data.saved_annotations || [], "");
-        updateCandidateIntervals(latestCandidateIntervals, latestCandidateIntervalStats);
-
-        // Auto-zoom to earliest visible candidate when date filter changes
-        const activeDateFilter = (dateFrom.value || "") + "|" + (dateTo.value || "");
-        if ((dateFrom.value || dateTo.value) && activeDateFilter !== lastDateFilterForZoom) {
-          lastDateFilterForZoom = activeDateFilter;
-          const visible = getFilteredCandidates();
-          if (visible.length && visible[0].start) {
-            const t0 = new Date(visible[0].start).getTime();
-            const rangeEnd = dateTo.value ? new Date(dateTo.value).getTime() : t0 + 24 * 3600 * 1000;
-            currentViewport = [
-              new Date(t0 - 30 * 60 * 1000).toISOString(),
-              new Date(Math.max(rangeEnd, t0 + 3 * 3600 * 1000)).toISOString(),
-            ];
+          if (
+            options.allowInitialWellSelection &&
+            !wellValue.value &&
+            wellValue.options.length > 1
+          ) {
+            wellValue.value = wellValue.options[1].value;
+            await refreshPlot({ allowInitialWellSelection: false, useScopeDates: true });
+            return;
           }
-        }
 
-        await refreshAnnotations();
-        renderPlot();
-        if (latestPlotWarning) {
-          surfaceStatus.textContent = latestPlotWarning;
+          pendingRecommendation = null;
+          suggestedRecommendation = data.recommendation && !data.recommendation.locked && data.recommendation.x
+            ? data.recommendation
+            : null;
+          currentRecommendation = data.recommendation && data.recommendation.locked
+            ? data.recommendation
+            : null;
+          if (options.focusAnnotation) {
+            currentRecommendation = { ...options.focusAnnotation, locked: true };
+            suggestedRecommendation = null;
+          }
+
+          updateAnnotationsTable(data.saved_annotations || [], "");
+          updateCandidateIntervals(latestCandidateIntervals, latestCandidateIntervalStats);
+
+          const activeDateFilter = (dateFrom.value || "") + "|" + (dateTo.value || "");
+          if (latestCandidatesComputed && (dateFrom.value || dateTo.value) && activeDateFilter !== lastDateFilterForZoom) {
+            lastDateFilterForZoom = activeDateFilter;
+            const visible = getFilteredCandidates();
+            if (visible.length && visible[0].start) {
+              const t0 = new Date(visible[0].start).getTime();
+              const rangeEnd = dateTo.value ? new Date(dateTo.value).getTime() : t0 + 24 * 3600 * 1000;
+              currentViewport = [
+                new Date(t0 - 30 * 60 * 1000).toISOString(),
+                new Date(Math.max(rangeEnd, t0 + 3 * 3600 * 1000)).toISOString(),
+              ];
+            }
+          }
+
+          await refreshAnnotations();
+          renderPlot();
+          if (latestPlotWarning) {
+            surfaceStatus.textContent = latestPlotWarning;
+          }
+        } finally {
+          if (detectCandidates && requestId === latestPlotRequestId) {
+            isCandidateSearchPending = false;
+            updateCandidateSearchButton();
+          }
         }
       }
 
-      async function confirmRecommendation(mode) {
-        if (!sessionId || !pendingRecommendation || pendingRecommendation.mode !== mode) return;
-        if (mode === "interval" && !pendingRecommendation.x_end) return;
+      async function searchCandidates() {
+        await refreshPlot({ detectCandidates: true });
+      }
 
+      async function submitReview(reviewAction) {
+        if (!sessionId) return;
+        const selection = getReviewSelection();
+        if (!selection?.x) return;
+        if (reviewAction === "override" && !labelSelect.value) {
+          alert("Для override выберите итоговую метку.");
+          return;
+        }
+
+        const isEditing = Boolean(editingAnnotationId);
         const payload = {
-          ...pendingRecommendation,
+          mode: selection.mode || latestRecommendationMode || "interval",
+          x: selection.x,
+          x_end: selection.mode === "interval" ? (selection.x_end || selection.x) : selection.x_end || null,
+          y: selection.y ?? null,
+          trace_name: selection.trace_name || null,
           locked: true,
+          candidate_id: getReviewCandidateId(),
+          review_action: reviewAction,
           label: labelSelect.value || null,
           correction_reason: correctionReason.value.trim() || null,
         };
-        const isEditing = Boolean(editingAnnotationId);
         const url = isEditing
           ? `/api/annotations/${sessionId}/${editingAnnotationId}`
           : `/api/recommendation/${sessionId}`;
@@ -1966,21 +2306,23 @@
         currentRecommendation = data.recommendation || payload;
         suggestedRecommendation = null;
         pendingRecommendation = null;
-        editingAnnotationId = isEditing ? editingAnnotationId : null;
+        editingAnnotationId = null;
+        labelSelect.value = "";
+        correctionReason.value = "";
         updateAnnotationsTable(data.saved_annotations || [], "");
         await refreshAnnotations();
         refreshLearning();
 
-        // Re-detect candidates (server filters out the just-labeled interval)
-        // then auto-open the next unlabeled candidate
-        await refreshPlot();
-        const remaining = getFilteredCandidates();
-        if (remaining.length > 0) {
-          openCandidateInterval(remaining[0]._origIdx);
-        } else {
-          activeCandidateIndex = null;
-          renderPlot();
+        await refreshPlot({ detectCandidates: true });
+        if (!isEditing) {
+          const remaining = getFilteredCandidates();
+          if (remaining.length > 0) {
+            openCandidateInterval(remaining[0]._origIdx);
+            return;
+          }
         }
+        activeCandidateIndex = null;
+        renderPlot();
       }
 
       function undoLastSelection() {
@@ -2039,7 +2381,7 @@
         if (annotation.date_to) {
           dateTo.value = formatDatetimeLocal(annotation.date_to);
         }
-        recommendationMode.value = annotation.recommendation_mode || "point";
+        recommendationMode.value = annotation.recommendation_mode || "interval";
         labelSelect.value = annotation.label || "";
         correctionReason.value = annotation.correction_reason || "";
 
@@ -2050,6 +2392,7 @@
             x_end: annotation.x_end,
             y: annotation.y,
             trace_name: annotation.trace_name,
+            candidate_id: annotation.candidate_id || null,
             locked: true
           }
         });
@@ -2094,20 +2437,26 @@
       function clearEditingMode() {
         editingAnnotationId = null;
         pendingRecommendation = null;
+        labelSelect.value = "";
+        correctionReason.value = "";
         renderPlot();
       }
 
       function openCandidateInterval(index) {
         const candidate = latestCandidateIntervals[index];
         if (!candidate) return;
+        editingAnnotationId = null;
         activeCandidateIndex = index;
+        recommendationMode.value = "interval";
+        latestRecommendationMode = "interval";
         updateCandidateIntervals(latestCandidateIntervals, latestCandidateIntervalStats);
         pendingRecommendation = {
           mode: "interval",
           x: candidate.start,
-          x_end: candidate.end,
+          x_end: candidate.end || candidate.start,
           y: null,
           trace_name: candidate.series_name || getPrimaryTrace(latestPlotPayload)?.name || null,
+          candidate_id: candidate.candidate_id || null,
           locked: false
         };
         renderPlot();
@@ -2115,9 +2464,11 @@
 
       uploadBtn.addEventListener("click", uploadFile);
       chatBtn.addEventListener("click", sendChat);
-      refreshPlotBtn.addEventListener("click", () => refreshPlot());
-      confirmPointBtn.addEventListener("click", () => confirmRecommendation("point"));
-      confirmIntervalBtn.addEventListener("click", () => confirmRecommendation("interval"));
+      refreshPlotBtn.addEventListener("click", searchCandidates);
+      acceptCandidateBtn.addEventListener("click", () => submitReview("accept"));
+      overrideCandidateBtn.addEventListener("click", () => submitReview("override"));
+      ambiguousCandidateBtn.addEventListener("click", () => submitReview("ambiguous"));
+      rejectCandidateBtn.addEventListener("click", () => submitReview("reject"));
       undoSelectionBtn.addEventListener("click", undoLastSelection);
       resetXRangeBtn.addEventListener("click", resetViewport);
       resetRecommendationBtn.addEventListener("click", resetRecommendation);
@@ -2141,10 +2492,9 @@
       });
 
       timeColumn.addEventListener("change", () => refreshPlot());
-      wellColumn.addEventListener("change", () => refreshPlot({ allowInitialWellSelection: true }));
+      wellColumn.addEventListener("change", () => refreshPlot({ allowInitialWellSelection: true, useScopeDates: true }));
       wellValue.addEventListener("change", () => {
-        updateActiveFilterChips({ selected_well_value: wellValue.value, date_from: dateFrom.value, date_to: dateTo.value });
-        refreshPlot();
+        refreshPlot({ useScopeDates: true });
       });
       windowSize.addEventListener("change", () => refreshPlot());
       dateFrom.addEventListener("change", () => {
@@ -2159,6 +2509,8 @@
       recommendationMode.addEventListener("change", () => refreshPlot());
       seriesSelect.addEventListener("change", () => refreshPlot());
       cursorSlider.addEventListener("input", () => applyCursorSelection(cursorSlider.value));
+      labelSelect.addEventListener("change", updateActionButtons);
+      updateCandidateSearchButton();
     </script>
   </body>
 </html>
