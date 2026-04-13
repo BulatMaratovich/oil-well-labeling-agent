@@ -30,9 +30,11 @@ from core.canonical_schema import (
     ContextBundle,
     LabelRecord,
     LocalFeatures,
+    MaintenanceDocument,
     QualityFlags,
     RegimeSequence,
     RuleResult,
+    StructuredFacts,
     WellProfile,
 )
 from core.task_manager import TaskSpec
@@ -63,6 +65,7 @@ class PipelineResult:
 
     # Context (optional)
     context_bundles: list[ContextBundle] = field(default_factory=list)
+    maintenance_facts: list[StructuredFacts] = field(default_factory=list)
 
     # Rule engine outputs (same order as candidates)
     rule_results: list[RuleResult] = field(default_factory=list)
@@ -218,7 +221,7 @@ class PipelineRunner:
                 result.warnings.append(f"local_segment_analyzer[{cand.candidate_id}]: {exc}")
 
         # ── Stage 7: Context Fact Extractor ───────────────────────────
-        if maintenance_docs and self.llm_client:
+        if maintenance_docs:
             try:
                 from context.context_fact_extractor import extract_facts_batch
                 facts = extract_facts_batch(
@@ -226,12 +229,15 @@ class PipelineRunner:
                     llm_client=self.llm_client,
                     model=self.llm_model,
                 )
-                # Build one ContextBundle per candidate (all facts shared)
+                result.maintenance_facts = facts
                 for cand in result.candidates:
-                    result.context_bundles.append(ContextBundle(
-                        candidate_id=cand.candidate_id,
+                    bundle = build_context_bundle(
+                        cand,
+                        maintenance_docs=maintenance_docs,
                         maintenance_facts=facts,
-                    ))
+                    )
+                    if bundle is not None:
+                        result.context_bundles.append(bundle)
             except Exception as exc:
                 result.warnings.append(f"context_fact_extractor: {exc}")
 
@@ -275,3 +281,62 @@ class PipelineRunner:
 def _default_registry():
     from rules.starter_ruleset import build_registry
     return build_registry()
+
+
+def build_context_bundle(
+    candidate: CandidateEvent,
+    *,
+    maintenance_docs: Optional[list[MaintenanceDocument]] = None,
+    maintenance_facts: Optional[list[StructuredFacts]] = None,
+) -> Optional[ContextBundle]:
+    matched_docs = [
+        doc for doc in (maintenance_docs or [])
+        if _asset_matches(candidate.asset_id, doc.asset_id)
+        and _date_matches(candidate, doc.event_date)
+    ]
+    matched_facts = [
+        fact for fact in (maintenance_facts or [])
+        if _asset_matches(candidate.asset_id, fact.asset_id)
+        and _date_matches(candidate, fact.event_date)
+    ]
+    if not matched_docs and not matched_facts:
+        return None
+
+    flags: list[str] = []
+    if matched_docs and not matched_facts:
+        flags.append("maintenance_docs_without_matching_facts")
+    if any(fact.extraction_confidence in {"low", "failed"} for fact in matched_facts):
+        flags.append("low_confidence_context")
+
+    return ContextBundle(
+        candidate_id=candidate.candidate_id,
+        maintenance_docs=matched_docs,
+        maintenance_facts=matched_facts,
+        flags=flags,
+    )
+
+
+def _asset_matches(candidate_asset_id: Optional[str], context_asset_id: Optional[str]) -> bool:
+    candidate_asset = _normalize_asset_id(candidate_asset_id)
+    context_asset = _normalize_asset_id(context_asset_id)
+    if candidate_asset is None:
+        return True
+    if context_asset in {None, "unknown"}:
+        return True
+    return candidate_asset == context_asset
+
+
+def _date_matches(candidate: CandidateEvent, event_date) -> bool:
+    if event_date is None:
+        return True
+    event_day = event_date.date()
+    return candidate.segment.start.date() <= event_day <= candidate.segment.end.date()
+
+
+def _normalize_asset_id(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text.casefold()

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -157,11 +158,67 @@ def _parse_response(raw: str, doc: MaintenanceDocument) -> StructuredFacts:
 # ---------------------------------------------------------------------------
 
 def _fallback_facts(doc: MaintenanceDocument) -> StructuredFacts:
-    """Return a minimal StructuredFacts when the LLM is unavailable."""
+    """Return a low-confidence but usable StructuredFacts when the LLM is unavailable."""
+    event_type = _infer_event_type(doc.raw_text)
+    parts_replaced = _infer_parts(doc.raw_text)
+    action_summary = _summarise_text(doc.raw_text)
+    event_date = _infer_event_date(doc.raw_text) or doc.event_date
     return StructuredFacts(
         doc_id=doc.doc_id,
-        event_type=None,
-        event_date=doc.event_date,
+        event_type=event_type,
+        event_date=event_date,
         asset_id=doc.asset_id,
+        action_summary=action_summary,
+        parts_replaced=parts_replaced,
         extraction_confidence="low",
     )
+
+
+def _infer_event_type(text: str) -> Optional[str]:
+    lowered = text.lower()
+    if any(token in lowered for token in ("замен", "ремн", "belt replacement", "replace belt")):
+        return "belt_replacement"
+    if any(token in lowered for token in ("planned_stop", "planned stop", "планов", "останов", "shutdown")):
+        return "planned_stop"
+    if any(token in lowered for token in ("обслуж", "service", "maintenance", "то", "техобслуж")):
+        return "equipment_service"
+    if any(token in lowered for token in ("sensor", "датчик", "calibration", "калибр", "проверка датчика")):
+        return "sensor_check"
+    return None
+
+
+def _infer_parts(text: str) -> list[str]:
+    lowered = text.lower()
+    parts: list[str] = []
+    if any(token in lowered for token in ("ремн", "belt")):
+        parts.append("belt")
+    if any(token in lowered for token in ("шток", "rod")):
+        parts.append("rod")
+    if any(token in lowered for token in ("датчик", "sensor")):
+        parts.append("sensor")
+    return parts
+
+
+def _summarise_text(text: str) -> Optional[str]:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return None
+    return cleaned[:160]
+
+
+def _infer_event_date(text: str) -> Optional[datetime]:
+    iso_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+    if iso_match:
+        try:
+            return datetime.fromisoformat(iso_match.group(1))
+        except ValueError:
+            pass
+
+    dotted_match = re.search(r"\b(\d{2}\.\d{2}\.\d{4})\b", text)
+    if dotted_match:
+        try:
+            return datetime.strptime(dotted_match.group(1), "%d.%m.%Y")
+        except ValueError:
+            pass
+
+    return None

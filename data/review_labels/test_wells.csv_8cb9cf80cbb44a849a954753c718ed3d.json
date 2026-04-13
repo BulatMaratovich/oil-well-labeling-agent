@@ -1,0 +1,34 @@
+[
+  {
+    "annotation_id": "28a103a7afed4e9388e9fe132ba2488e",
+    "filename": "test_wells.csv",
+    "well_column": "well",
+    "well_value": null,
+    "recommendation_mode": "interval",
+    "x": "2024-01-09T00:00:00+00:00",
+    "x_end": "2024-01-09T12:00:00+00:00",
+    "y": 10.5,
+    "trace_name": null,
+    "series": [
+      "power_kw"
+    ],
+    "window_size": 25,
+    "date_from": null,
+    "date_to": null,
+    "label": "belt_break",
+    "correction_reason": null,
+    "created_at": "2026-04-13T18:02:32.309190+00:00",
+    "candidate_id": null,
+    "proposed_label": null,
+    "proposed_rule": null,
+    "review_action": "accept",
+    "review_status": "accepted",
+    "routing": null,
+    "candidate_source": null,
+    "deviation_type": null,
+    "deviation_score": null,
+    "explanation": null,
+    "rule_trace": {},
+    "local_features": {}
+  }
+]

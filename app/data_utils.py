@@ -288,7 +288,10 @@ def detect_candidate_intervals(
     if len(series) < 12:
         return []
 
+    n_points = len(y_values)
     effective_window = max(int(window_size or 12), 6)
+    # Cap: window must be <= 25 % of the series so rolling stats are meaningful
+    effective_window = min(effective_window, max(n_points // 4, 6))
     anomaly_lower = (anomaly_goal or "").lower()
     if anomaly_lower and any(token in anomaly_lower for token in ("статист", "%", "процент")):
         candidates = detect_statistical_shift_intervals(
@@ -411,10 +414,10 @@ def detect_statistical_shift_intervals(
     )
     full_series = pd.Series(y_values, dtype="float64")
     valid_count = int(full_series.notna().sum())
-    if valid_count < max(window_size * 3, 24):
-        return []
-
+    # Clamp stat_window first so the guard uses the effective value, not the raw input
     stat_window = min(max(window_size, 8), max(len(full_series) // 3, 8))
+    if valid_count < max(stat_window * 3, 24):
+        return []
     baseline_window = min(max(stat_window * 4, stat_window + 8), len(full_series))
     min_periods = max(stat_window // 2, 4)
 

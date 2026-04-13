@@ -27,10 +27,10 @@ from app.llm_assistant import (
     apply_discovery_updates,
     build_initial_message,
     generate_reply,
-    infer_message_updates,
-    infer_series_from_message,
-    infer_settings_from_message,
 )
+from app.maintenance_utils import load_maintenance_documents, serialize_maintenance_document
+from app.mistral_client import MistralChatClient
+from app.session_store import FileSessionStore
 from app.config import settings
 from app.models import RecommendationPoint, SavedAnnotation, SessionState, new_id
 from app.task_manager import (
@@ -41,8 +41,17 @@ from app.task_manager import (
     sync_task_spec_from_state,
 )
 from app.stat_analysis import analyze_candidate_intervals
-from core.canonical_schema import CandidateEvent, DateRange, LocalFeatures, RuleResult, RuleTrace
-from core.pipeline_runner import PipelineRunner
+from core.canonical_schema import (
+    CandidateEvent,
+    ContextBundle,
+    DateRange,
+    LocalFeatures,
+    MaintenanceDocument,
+    RuleResult,
+    RuleTrace,
+    StructuredFacts,
+)
+from core.pipeline_runner import PipelineRunner, build_context_bundle
 from core.policy_engine import route as route_candidate
 from core.task_manager import (
     ReviewPolicy as CoreReviewPolicy,
@@ -53,16 +62,34 @@ from core.task_manager import (
 
 app = FastAPI(title="Oil Well Labeling UI")
 templates = Jinja2Templates(directory="app/templates")
-SESSIONS: dict[str, SessionState] = {}
 LABELS_DIR = Path("data/review_labels")
 LABELS_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_STORE = FileSessionStore()
+
+
+def _default_window_size(profile) -> Optional[int]:
+    """Return a default window size in *data points* (not seconds).
+
+    ``profile.inferred_window_size`` is the median sampling step in seconds.
+    It must not be used directly as a point count — that causes the statistical
+    detector to require far more data points than actually exist.
+    """
+    rows = getattr(profile, "rows", 0) or 0
+    if rows < 12:
+        return None
+    # ~5 % of the series, clamped to [6, 50] points
+    return max(6, min(50, rows // 20))
 
 
 def _get_session(session_id: str) -> SessionState:
-    state = SESSIONS.get(session_id)
+    state = SESSION_STORE.load(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Сессия не найдена")
     return state
+
+
+def _save_session(state: SessionState) -> None:
+    SESSION_STORE.save(state)
 
 
 def _default_well_value(state: SessionState, df: Optional[pd.DataFrame] = None) -> Optional[str]:
@@ -81,6 +108,11 @@ def _default_well_value(state: SessionState, df: Optional[pd.DataFrame] = None) 
 
 
 def _parse_state_dataframe(state: SessionState) -> pd.DataFrame:
+    if state.dataframe_path:
+        path = Path(state.dataframe_path)
+        if not path.exists():
+            raise HTTPException(status_code=400, detail="Файл исходных данных сессии не найден")
+        return load_tabular_file(state.filename or path.name, path.read_bytes())
     if not state.dataframe_json:
         raise HTTPException(status_code=400, detail="Нет загруженных данных")
     return pd.read_json(StringIO(state.dataframe_json), orient="split")
@@ -148,6 +180,107 @@ def _deserialize_local_features(payload: Optional[dict[str, object]], candidate_
         return LocalFeatures(**sanitized)
     except TypeError:
         return None
+
+
+def _serialize_structured_fact(fact: StructuredFacts) -> dict[str, object]:
+    return {
+        "doc_id": fact.doc_id,
+        "event_type": fact.event_type,
+        "event_date": fact.event_date.isoformat() if fact.event_date else None,
+        "asset_id": fact.asset_id,
+        "duration_h": fact.duration_h,
+        "action_summary": fact.action_summary,
+        "parts_replaced": list(fact.parts_replaced or []),
+        "extraction_confidence": fact.extraction_confidence,
+    }
+
+
+def _maintenance_documents_target(state: SessionState) -> Optional[Path]:
+    if not state.task_spec:
+        return None
+    return Path(default_task_spec_path(state.task_spec.task_id)).parent / "maintenance_documents.json"
+
+
+def _persist_maintenance_documents(state: SessionState) -> Optional[Path]:
+    target = _maintenance_documents_target(state)
+    if target is None:
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            [serialize_maintenance_document(doc) for doc in state.maintenance_documents],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return target
+
+
+def _maintenance_signature(documents: list[MaintenanceDocument]) -> Optional[str]:
+    if not documents:
+        return None
+    digest = hashlib.sha256()
+    for doc in documents:
+        digest.update((doc.doc_id or "").encode("utf-8"))
+        digest.update((doc.asset_id or "").encode("utf-8"))
+        digest.update(doc.event_date.isoformat().encode("utf-8"))
+        digest.update((doc.raw_text or "").encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _build_maintenance_context_summary(
+    state: SessionState,
+    *,
+    pipeline_result=None,
+    review_candidates: Optional[list[dict[str, object]]] = None,
+) -> dict[str, object]:
+    documents = state.maintenance_documents or []
+    summary: dict[str, object] = {
+        "filename": state.maintenance_upload_name,
+        "document_count": len(documents),
+        "documents_path": state.maintenance_documents_path,
+        "llm_configured": settings.mistral_configured,
+        "used_in_last_search": False,
+        "fact_count": 0,
+        "matched_candidate_count": 0,
+        "low_confidence_fact_count": 0,
+        "status": "not_uploaded" if not documents else "uploaded",
+    }
+    if not documents or pipeline_result is None:
+        return summary
+
+    summary["status"] = "applied"
+    summary["used_in_last_search"] = True
+    summary["fact_count"] = len(
+        {
+            (
+                fact.doc_id,
+                fact.event_type,
+                fact.event_date.isoformat() if fact.event_date else "",
+                fact.asset_id or "",
+            )
+            for fact in (pipeline_result.maintenance_facts or [])
+        }
+    )
+    if review_candidates is not None:
+        summary["matched_candidate_count"] = sum(
+            1
+            for item in review_candidates
+            if item.get("maintenance_facts")
+        )
+    else:
+        summary["matched_candidate_count"] = sum(
+            1
+            for bundle in (pipeline_result.context_bundles or [])
+            if bundle.maintenance_facts
+        )
+    summary["low_confidence_fact_count"] = sum(
+        1
+        for fact in (pipeline_result.maintenance_facts or [])
+        if fact.extraction_confidence in {"low", "failed"}
+    )
+    return summary
 
 
 def _find_review_candidate(state: SessionState, candidate_id: Optional[str]) -> Optional[dict[str, object]]:
@@ -255,6 +388,7 @@ def _review_candidate_payload(
     *,
     rule_result: RuleResult,
     local_features: Optional[LocalFeatures],
+    context: Optional[ContextBundle],
     source: str,
     routing: Optional[object] = None,
     explanation: Optional[str] = None,
@@ -262,6 +396,8 @@ def _review_candidate_payload(
     flags = list(candidate.flags)
     if getattr(routing, "disposition", None) == "mandatory_review":
         flags.append(str(getattr(routing, "reason", "mandatory_review")))
+    if context:
+        flags.extend(context.flags or [])
     return {
         "candidate_id": candidate.candidate_id,
         "start": candidate.segment.start.isoformat(),
@@ -281,6 +417,11 @@ def _review_candidate_payload(
         "abstain_reason": rule_result.abstain_reason,
         "conflict_flag": rule_result.conflict_flag,
         "local_features": asdict(local_features) if local_features else {},
+        "context_flags": list(context.flags or []) if context else [],
+        "maintenance_facts": [
+            _serialize_structured_fact(item)
+            for item in (context.maintenance_facts or [])
+        ] if context else [],
         "explanation": explanation or explain_review_candidate(rule_result),
     }
 
@@ -312,6 +453,7 @@ def _build_pipeline_review_candidates(
                 candidate,
                 rule_result=rule_result,
                 local_features=local_features,
+                context=context,
                 source="pipeline",
                 routing=routing,
                 explanation=explain_review_candidate(rule_result, context),
@@ -376,11 +518,16 @@ def _build_statistical_fallback_candidates(
         )
         signal_series = series_by_name.get(candidate.series_name) or default_series
         local_features = analyze(candidate, signal_series) if signal_series else None
+        context = build_context_bundle(
+            candidate,
+            maintenance_docs=state.maintenance_documents,
+            maintenance_facts=getattr(pipeline_result, "maintenance_facts", []),
+        )
         rule_result = evaluate(
             RuleInput(
                 candidate=candidate,
                 features=local_features,
-                context=None,
+                context=context,
                 task_params={
                     "primary_deviation": core_spec.primary_deviation,
                     "equipment_family": core_spec.equipment_family,
@@ -394,8 +541,10 @@ def _build_statistical_fallback_candidates(
             candidate,
             rule_result=rule_result,
             local_features=local_features,
+            context=context,
             source="statistical_fallback",
             routing=routing,
+            explanation=explain_review_candidate(rule_result, context),
         )
         payload["reason"] = reason
         review_candidates.append(payload)
@@ -410,6 +559,8 @@ def _review_cache_key(
     well_column: Optional[str],
     window_size: Optional[int],
     anomaly_goal: Optional[str],
+    statistical_threshold_pct: Optional[float],
+    maintenance_signature: Optional[str],
 ) -> str:
     return json.dumps(
         {
@@ -419,6 +570,8 @@ def _review_cache_key(
             "well_column": well_column,
             "window_size": window_size,
             "anomaly_goal": anomaly_goal,
+            "statistical_threshold_pct": statistical_threshold_pct,
+            "maintenance_signature": maintenance_signature,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -443,6 +596,8 @@ def _build_review_candidates(
         well_column=well_column,
         window_size=window_size,
         anomaly_goal=state.anomaly_goal,
+        statistical_threshold_pct=statistical_threshold_pct,
+        maintenance_signature=_maintenance_signature(state.maintenance_documents),
     )
     if state.review_cache_key == cache_key and state.review_candidates:
         return list(state.review_candidates)
@@ -450,6 +605,7 @@ def _build_review_candidates(
     if not time_column or not selected_series:
         state.review_cache_key = cache_key
         state.review_candidates = []
+        state.maintenance_context_summary = _build_maintenance_context_summary(state)
         return []
 
     full_scope_frame = filter_dataframe(
@@ -463,6 +619,7 @@ def _build_review_candidates(
     if full_scope_frame.empty:
         state.review_cache_key = cache_key
         state.review_candidates = []
+        state.maintenance_context_summary = _build_maintenance_context_summary(state)
         return []
 
     core_spec = _build_core_task_spec(
@@ -473,11 +630,17 @@ def _build_review_candidates(
         window_size=window_size,
         statistical_threshold_pct=statistical_threshold_pct,
     )
-    runner = PipelineRunner(core_spec)
+    llm_client = MistralChatClient() if settings.mistral_configured else None
+    runner = PipelineRunner(
+        core_spec,
+        llm_client=llm_client,
+        llm_model=settings.mistral_resolved_model if settings.mistral_configured else None,
+    )
     pipeline_result = runner.run(
         full_scope_frame.to_csv(index=False).encode("utf-8"),
         asset_id=well_value,
         filename="session.csv",
+        maintenance_docs=state.maintenance_documents or None,
     )
     review_candidates = _build_pipeline_review_candidates(pipeline_result, core_spec)
     if not review_candidates:
@@ -499,6 +662,11 @@ def _build_review_candidates(
             statistical_threshold_pct=statistical_threshold_pct,
             window_size=window_size,
         )
+    state.maintenance_context_summary = _build_maintenance_context_summary(
+        state,
+        pipeline_result=pipeline_result,
+        review_candidates=review_candidates,
+    )
 
     state.review_cache_key = cache_key
     state.review_candidates = review_candidates
@@ -526,7 +694,10 @@ def _resolve_review_decision(
         raise HTTPException(status_code=400, detail="Для override выберите итоговую метку")
 
     if action == "accept":
-        return action, proposed_label, "accepted"
+        # If the user explicitly provided a label (manual annotation without a
+        # candidate, or a correction during accept), honour it; otherwise fall
+        # back to the system-proposed label.
+        return action, label if label else proposed_label, "accepted"
     if action == "override":
         return action, label, "accepted"
     if action == "reject":
@@ -667,6 +838,30 @@ def _persist_task_spec(state: SessionState) -> None:
     persist_task_spec(state.task_spec, state.task_spec_path)
 
 
+def _apply_chat_control_updates(state: SessionState, payload: dict[str, object]) -> None:
+    threshold = payload.get("statistical_threshold_pct")
+    if threshold not in (None, ""):
+        try:
+            parsed_threshold = float(threshold)
+        except (TypeError, ValueError):
+            parsed_threshold = None
+        if parsed_threshold is not None and parsed_threshold > 0:
+            state.statistical_threshold_pct = parsed_threshold
+
+    mode = payload.get("recommendation_mode")
+    if mode in {"point", "interval"}:
+        state.recommendation_mode = str(mode)
+
+    window_size = payload.get("window_size")
+    if window_size not in (None, ""):
+        try:
+            parsed_window_size = int(window_size)
+        except (TypeError, ValueError):
+            parsed_window_size = None
+        if parsed_window_size is not None and parsed_window_size > 0:
+            state.window_size = parsed_window_size
+
+
 def _suggest_recommendation(
     plot_payload: dict[str, object],
     window_size: Optional[int],
@@ -745,24 +940,27 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     profile = profile_dataframe(df)
+    session_id = new_id()
     session = SessionState(
-        session_id=new_id(),
+        session_id=session_id,
         filename=file.filename,
-        dataframe_json=df.to_json(orient="split", date_format="iso"),
         profile=profile,
         selected_well_column=profile.inferred_well_column,
         selected_time_column=profile.inferred_time_column,
         selected_series=profile.numeric_candidates[:1],
         selected_well_value=profile.sheet_names[0] if profile.detected_multiple_wells and profile.sheet_names else None,
-        window_size=profile.inferred_window_size,
+        window_size=_default_window_size(profile),
         annotations_path=str(LABELS_DIR / f"{file.filename or 'session'}_{new_id()}.json"),
     )
+    dataset_path = SESSION_STORE.save_uploaded_dataset(session.session_id, file.filename or "dataset.csv", content)
+    session.dataframe_path = str(dataset_path)
     session.task_spec = build_initial_task_spec(session)
     session.task_spec_path = str(default_task_spec_path(session.task_spec.task_id))
     _persist_task_spec(session)
+    session.maintenance_context_summary = _build_maintenance_context_summary(session)
     initial_message = build_initial_message(session)
     session.messages.append({"role": "assistant", "content": initial_message})
-    SESSIONS[session.session_id] = session
+    _save_session(session)
     return JSONResponse(
         jsonable_encoder({
             "session_id": session.session_id,
@@ -782,12 +980,44 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
                 "task_spec_path": session.task_spec_path,
             },
             "task_spec": asdict(session.task_spec) if session.task_spec else None,
+            "maintenance_context": session.maintenance_context_summary,
             "llm": {
                 "provider": "mistral",
                 "model": settings.mistral_resolved_model,
                 "configured": settings.mistral_configured,
             },
         })
+    )
+
+
+@app.post("/api/maintenance/{session_id}")
+async def upload_maintenance(session_id: str, file: UploadFile = File(...)) -> JSONResponse:
+    state = _get_session(session_id)
+    content = await file.read()
+    fallback_asset_id = state.selected_well_value or _default_well_value(state)
+    try:
+        documents = load_maintenance_documents(
+            file.filename or "maintenance.txt",
+            content,
+            fallback_asset_id=fallback_asset_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    state.maintenance_documents = documents
+    state.maintenance_upload_name = file.filename or "maintenance.txt"
+    persisted_path = _persist_maintenance_documents(state)
+    state.maintenance_documents_path = str(persisted_path) if persisted_path else None
+    state.review_candidates = []
+    state.review_cache_key = None
+    state.maintenance_context_summary = _build_maintenance_context_summary(state)
+    _save_session(state)
+    return JSONResponse(
+        jsonable_encoder(
+            {
+                "maintenance_context": state.maintenance_context_summary,
+            }
+        )
     )
 
 
@@ -799,46 +1029,7 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
     if not user_message:
         raise HTTPException(status_code=400, detail="Сообщение пустое")
 
-    inferred = infer_settings_from_message(user_message)
-    inferred_series = infer_series_from_message(
-        user_message,
-        state.profile.numeric_candidates if state.profile else [],
-    )
-    local_result = infer_message_updates(user_message, state)
-    local_updates = local_result.get("updates") or {}
-
-    state.anomaly_goal = (
-        local_updates.get("anomaly_goal")
-        or inferred.get("anomaly_goal")
-        or state.anomaly_goal
-        or payload.get("anomaly_goal")
-    )
-    state.chart_preferences = (
-        local_updates.get("chart_preferences")
-        or inferred.get("chart_preferences")
-        or state.chart_preferences
-        or payload.get("chart_preferences")
-    )
-    incoming_threshold = local_updates.get("statistical_threshold_pct")
-    if incoming_threshold in (None, ""):
-        incoming_threshold = inferred.get("statistical_threshold_pct")
-    if incoming_threshold in (None, ""):
-        incoming_threshold = state.statistical_threshold_pct
-    if incoming_threshold in (None, ""):
-        incoming_threshold = payload.get("statistical_threshold_pct")
-    if incoming_threshold not in (None, ""):
-        state.statistical_threshold_pct = float(incoming_threshold)
-    state.recommendation_mode = (
-        local_updates.get("recommendation_mode")
-        or inferred.get("recommendation_mode")
-        or state.recommendation_mode
-    )
-
-    window_size = local_updates.get("window_size") or state.window_size
-    if window_size in (None, ""):
-        window_size = inferred.get("window_size")
-    if window_size not in (None, ""):
-        state.window_size = int(window_size)
+    _apply_chat_control_updates(state, payload)
 
     state.messages.append({"role": "user", "content": user_message})
     llm_result = generate_reply(state, user_message)
@@ -849,6 +1040,7 @@ async def chat(session_id: str, request: Request) -> JSONResponse:
         _persist_task_spec(state)
     reply = llm_result["reply"]
     state.messages.append({"role": "assistant", "content": reply})
+    _save_session(state)
     return JSONResponse(
         jsonable_encoder(
             {
@@ -998,6 +1190,7 @@ async def get_plot(
         else:
             plot_warning = "Для выбранных фильтров данных не найдено."
 
+    _save_session(state)
     return JSONResponse(
         jsonable_encoder({
             "plot": plot_payload,
@@ -1014,6 +1207,7 @@ async def get_plot(
             "statistical_threshold_pct": resolved_statistical_threshold_pct,
             "recommendation_mode": resolved_recommendation_mode,
             "saved_annotations": [asdict(item) for item in _filtered_annotations(state, resolved_well_value)],
+            "maintenance_context": state.maintenance_context_summary or _build_maintenance_context_summary(state),
         })
     )
 
@@ -1043,6 +1237,7 @@ async def set_recommendation(session_id: str, request: Request) -> JSONResponse:
             review_status=review_status,
             candidate=candidate,
         )
+    _save_session(state)
     return JSONResponse(
         jsonable_encoder(
             {
@@ -1146,6 +1341,7 @@ async def update_annotation(session_id: str, annotation_id: str, request: Reques
     state.recommendation_mode = annotation.recommendation_mode
     _persist_annotations(state)
     _write_to_task_memory(state, annotation)
+    _save_session(state)
 
     return JSONResponse(
         jsonable_encoder(
@@ -1171,6 +1367,7 @@ async def delete_annotation(session_id: str, annotation_id: str) -> JSONResponse
         state.recommendation = RecommendationPoint(mode=state.recommendation_mode, locked=False)
     _persist_annotations(state)
     _delete_from_task_memory(state, annotation_id)
+    _save_session(state)
     return JSONResponse(
         jsonable_encoder(
             {

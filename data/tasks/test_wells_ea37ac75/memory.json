@@ -1,0 +1,22 @@
+[
+  {
+    "record_id": "52658651ac7049c498a79bbd6e121497",
+    "task_id": "test_wells_ea37ac75",
+    "asset_id": "well_A",
+    "segment_start": "2024-01-09T12:00:00+00:00",
+    "segment_end": "2024-01-09T18:00:00+00:00",
+    "deviation_type": "ищу резкие падения мощности, обрывы ремня",
+    "final_label": "belt_break",
+    "was_override": true,
+    "correction_reason": null,
+    "confirmed_at": "2026-04-13T17:49:32.929946+00:00",
+    "run_id": null,
+    "status": "accepted",
+    "rule_label": "unknown",
+    "winning_rule": null,
+    "rules_fired": [],
+    "conflict": false,
+    "abstain_reason": null,
+    "features": null
+  }
+]

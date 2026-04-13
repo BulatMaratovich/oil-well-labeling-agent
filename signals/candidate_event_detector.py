@@ -80,6 +80,30 @@ def detect(
         ]
 
     baseline_map = {b.regime_type: b for b in well_profile.baseline_regimes}
+
+    # ------------------------------------------------------------------
+    # Cross-type fallback for first-run data
+    #
+    # With only a single pass of data PELT segments the series into N
+    # regime types each appearing once.  Building per-type baselines from
+    # one observation means p10 == p90 == mean, so every regime looks
+    # "normal" relative to its own history — no candidates are generated.
+    #
+    # Fix: when all baselines have observation_count <= 1, identify the
+    # *dominant* operating regime (longest cumulative duration) as the
+    # "normal" state and compare all other regimes against it.
+    # ------------------------------------------------------------------
+    all_single_obs = all(b.observation_count <= 1 for b in well_profile.baseline_regimes)
+    dominant_baseline: Optional[RegimeBaseline] = None
+    dominant_type: Optional[str] = None
+    if all_single_obs and well_profile.baseline_regimes:
+        duration_by_type: dict[str, float] = {}
+        for r in regimes:
+            duration_by_type[r.regime_type] = duration_by_type.get(r.regime_type, 0.0) + r.duration_h
+        if duration_by_type:
+            dominant_type = max(duration_by_type, key=lambda t: duration_by_type[t])
+            dominant_baseline = baseline_map.get(dominant_type)
+
     candidates: list[CandidateEvent] = []
 
     for i, regime in enumerate(regimes):
@@ -87,9 +111,26 @@ def detect(
         preceding = regimes[i - 1].regime_type if i > 0 else None
         following = regimes[i + 1].regime_type if i < len(regimes) - 1 else None
 
+        # For single-run data: compare non-dominant regimes against the
+        # dominant baseline, but only when they differ meaningfully
+        # (>= 10 % relative deviation in mean power).
+        effective_baseline = baseline
+        if (
+            all_single_obs
+            and dominant_baseline is not None
+            and dominant_type is not None
+            and regime.regime_type != dominant_type
+            and regime.mean_power is not None
+            and dominant_baseline.mean_power is not None
+        ):
+            dom_mean = dominant_baseline.mean_power
+            rel_diff = abs(regime.mean_power - dom_mean) / max(abs(dom_mean), 1.0)
+            if rel_diff >= 0.10:
+                effective_baseline = dominant_baseline
+
         events_for_regime = _evaluate_regime(
             regime=regime,
-            baseline=baseline,
+            baseline=effective_baseline,
             asset_id=asset_id,
             preceding=preceding,
             following=following,
@@ -135,7 +176,15 @@ def _evaluate_regime(
 
     # 2. Atypical amplitude
     if regime.mean_power is not None and baseline.p10_power is not None:
-        band = max(baseline.p90_power - baseline.p10_power, 1e-6)
+        # When the baseline has a single observation p10 == p90 == mean, so the
+        # raw band is 0.  Use at least 10 % of the baseline mean as the band to
+        # avoid division-by-near-zero producing artificially huge scores and to
+        # keep scores comparable across data sets with different scales.
+        band = max(
+            baseline.p90_power - baseline.p10_power,
+            abs(baseline.mean_power) * 0.10,
+            1.0,
+        )
         if regime.mean_power < baseline.p10_power:
             score = min((baseline.p10_power - regime.mean_power) / band, 5.0)
             events.append(CandidateEvent(

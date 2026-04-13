@@ -1,0 +1,269 @@
+{
+  "session_id": "53ff1a9a0a424774848f66211c2d208a",
+  "filename": "test_wells.csv",
+  "dataframe_json": null,
+  "dataframe_path": "data/sessions/53ff1a9a0a424774848f66211c2d208a/source.csv",
+  "profile": {
+    "rows": 500,
+    "columns": [
+      {
+        "name": "timestamp",
+        "dtype": "object",
+        "nullable_pct": 0.0,
+        "sample_values": [
+          "2024-01-01 00:00:00",
+          "2024-01-01 01:00:00",
+          "2024-01-01 02:00:00"
+        ],
+        "numeric": false,
+        "datetime_like": true,
+        "unique_ratio": 1.0
+      },
+      {
+        "name": "well",
+        "dtype": "object",
+        "nullable_pct": 0.0,
+        "sample_values": [
+          "well_A",
+          "well_A",
+          "well_A"
+        ],
+        "numeric": false,
+        "datetime_like": false,
+        "unique_ratio": 0.004
+      },
+      {
+        "name": "power_kw",
+        "dtype": "float64",
+        "nullable_pct": 0.0,
+        "sample_values": [
+          "102.48",
+          "99.31",
+          "103.24"
+        ],
+        "numeric": true,
+        "datetime_like": false,
+        "unique_ratio": 0.858
+      },
+      {
+        "name": "temperature",
+        "dtype": "float64",
+        "nullable_pct": 0.0,
+        "sample_values": [
+          "55.0",
+          "61.6",
+          "58.0"
+        ],
+        "numeric": true,
+        "datetime_like": false,
+        "unique_ratio": 0.256
+      }
+    ],
+    "timestamp_candidates": [
+      "timestamp"
+    ],
+    "well_candidates": [
+      "well"
+    ],
+    "numeric_candidates": [
+      "power_kw",
+      "temperature"
+    ],
+    "inferred_well_column": "well",
+    "inferred_time_column": "timestamp",
+    "detected_multiple_wells": true,
+    "inferred_window_size": 3600,
+    "unique_well_count": 2,
+    "time_min": "2024-01-01T00:00:00+00:00",
+    "time_max": "2024-01-21T19:00:00+00:00",
+    "sheet_names": [],
+    "source_sheet_column": null
+  },
+  "selected_well_column": "well",
+  "selected_time_column": "timestamp",
+  "selected_series": [
+    "power_kw"
+  ],
+  "selected_well_value": "well_A",
+  "date_from": "2024-01-01T00:00:00+00:00",
+  "date_to": "2024-01-11T09:00:00+00:00",
+  "anomaly_goal": null,
+  "chart_preferences": null,
+  "window_size": 25,
+  "statistical_threshold_pct": null,
+  "recommendation_mode": "interval",
+  "recommendation": {
+    "mode": "interval",
+    "x": "2024-01-09T08:00:00+00:00",
+    "y": 8.34,
+    "x_end": "2024-01-10T03:00:00+00:00",
+    "trace_name": "power_kw",
+    "locked": false
+  },
+  "saved_annotations": [],
+  "annotations_path": "data/review_labels/test_wells.csv_6998e63075aa46a6aae12b95de7a9cdd.json",
+  "task_spec": {
+    "task_id": "test_wells_295bfc2c",
+    "version": "0.1.0",
+    "title": "Task for test_wells.csv",
+    "equipment_family": "generic_well_timeseries",
+    "primary_deviation": "user_defined_deviation",
+    "signal_schema": [
+      {
+        "name": "power_kw",
+        "unit": null,
+        "role": "candidate_signal",
+        "selected_for_review": true
+      },
+      {
+        "name": "temperature",
+        "unit": null,
+        "role": "candidate_signal",
+        "selected_for_review": false
+      }
+    ],
+    "segmentation_strategy": "regime_segment_with_manual_point_or_interval_refinement",
+    "feature_profile": [
+      "power_mean",
+      "power_std",
+      "power_p10",
+      "power_p90",
+      "transition_sharpness",
+      "segment_duration"
+    ],
+    "label_taxonomy": [
+      "belt_break",
+      "planned_stop",
+      "planned_maintenance",
+      "sensor_issue",
+      "stable_unusual_regime",
+      "unknown"
+    ],
+    "unknown_label": "unknown",
+    "context_sources": [
+      "maintenance_reports",
+      "equipment_metadata",
+      "engineer_review_notes"
+    ],
+    "baseline_strategy": "per_well_history",
+    "quality_rules": [
+      "require_time_axis",
+      "drop_non_numeric_signal_values",
+      "flag_dropout_segments"
+    ],
+    "review_policy": {
+      "policy_name": "human_review_required",
+      "auto_label_allowed": false,
+      "allow_modify": true,
+      "allow_reject": true,
+      "allow_point": true,
+      "allow_interval": true
+    },
+    "normal_operation_definition": null,
+    "confounders": [
+      "planned_stop",
+      "planned_maintenance",
+      "sensor_issue",
+      "load_change"
+    ],
+    "minimum_segment_duration": 25,
+    "expected_deviation_frequency": null,
+    "statistical_threshold_pct": null,
+    "well_column": "well",
+    "time_column": "timestamp"
+  },
+  "task_spec_path": "data/tasks/test_wells_295bfc2c/task_spec.json",
+  "maintenance_documents": [],
+  "maintenance_upload_name": null,
+  "maintenance_documents_path": null,
+  "maintenance_context_summary": {
+    "filename": null,
+    "document_count": 0,
+    "documents_path": null,
+    "llm_configured": true,
+    "used_in_last_search": false,
+    "fact_count": 0,
+    "matched_candidate_count": 0,
+    "low_confidence_fact_count": 0,
+    "status": "not_uploaded"
+  },
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Файл загружен: test_wells.csv, строк: 500. Похоже, временная ось: `timestamp`. Похоже, в данных несколько скважин: примерно 2. Базовая колонка скважины: `well`. Диапазон времени: от `2024-01-01T00:00:00+00:00` до `2024-01-21T19:00:00+00:00`. Числовые ряды, которые можно вывести: `power_kw`, `temperature`. Через интерфейс выберите скважину, период и ряды для обзора. Через чат можно уточнить тип отклонения, конфаундеры и определение нормальной работы."
+    }
+  ],
+  "review_candidates": [
+    {
+      "candidate_id": "cand_8d98362671",
+      "start": "2024-01-09T08:00:00+00:00",
+      "end": "2024-01-10T03:00:00+00:00",
+      "series_name": "power_kw",
+      "source": "pipeline",
+      "deviation_type": "atypical_amplitude",
+      "deviation_score": 5.0,
+      "reason": "atypical_amplitude",
+      "proposed_label": "stable_unusual_regime",
+      "routing": "review",
+      "routing_reason": "rule:stable_unusual_regime",
+      "confidence": 0.95,
+      "flags": [],
+      "winning_rule": "stable_unusual_regime",
+      "rule_trace": {
+        "rules_evaluated": [
+          "sensor_all_zero",
+          "sensor_high_noise",
+          "sensor_novel_extreme",
+          "belt_replacement_from_fact",
+          "low_power_stop",
+          "planned_maintenance_from_fact",
+          "planned_stop_from_fact",
+          "long_unusual_duration",
+          "stable_unusual_regime",
+          "belt_break_abrupt_drop",
+          "full_series_review_unknown",
+          "high_deviation_generic"
+        ],
+        "rules_fired": [
+          "stable_unusual_regime",
+          "belt_break_abrupt_drop",
+          "high_deviation_generic"
+        ],
+        "rules_blocked": [
+          "sensor_all_zero",
+          "sensor_high_noise",
+          "sensor_novel_extreme",
+          "belt_replacement_from_fact",
+          "low_power_stop",
+          "planned_maintenance_from_fact",
+          "planned_stop_from_fact",
+          "long_unusual_duration",
+          "full_series_review_unknown"
+        ],
+        "winning_rule": "stable_unusual_regime",
+        "conflict": false,
+        "abstain_reason": null
+      },
+      "abstain_reason": null,
+      "conflict_flag": false,
+      "local_features": {
+        "candidate_id": "cand_8d98362671",
+        "power_mean": 9.825,
+        "power_std": 1.6364226065929366,
+        "power_p10": 8.166,
+        "power_p90": 11.544,
+        "min_power": 7.2,
+        "max_power": 13.82,
+        "zero_fraction": 0.0,
+        "transition_sharpness": 88.74125,
+        "segment_duration_h": 19.0,
+        "preceding_regime_type": "type_2",
+        "following_regime_type": "type_1"
+      },
+      "context_flags": [],
+      "maintenance_facts": [],
+      "explanation": "Метка «stable_unusual_regime» присвоена по правилу «stable_unusual_regime». Всего оценено правил: 12, сработало: 3."
+    }
+  ],
+  "review_cache_key": "{\"anomaly_goal\": null, \"maintenance_signature\": null, \"selected_series\": [\"power_kw\"], \"statistical_threshold_pct\": null, \"time_column\": \"timestamp\", \"well_column\": \"well\", \"well_value\": \"well_A\", \"window_size\": 25}"
+}

@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 from uuid import uuid4
 
+from core.canonical_schema import MaintenanceDocument
+
 
 def new_id() -> str:
     return uuid4().hex
@@ -165,6 +167,7 @@ class SessionState:
     session_id: str = field(default_factory=new_id)
     filename: Optional[str] = None
     dataframe_json: Optional[str] = None
+    dataframe_path: Optional[str] = None
     profile: Optional[DataProfile] = None
     selected_well_column: Optional[str] = None
     selected_time_column: Optional[str] = None
@@ -182,6 +185,10 @@ class SessionState:
     annotations_path: Optional[str] = None
     task_spec: Optional[TaskSpec] = None
     task_spec_path: Optional[str] = None
+    maintenance_documents: list[MaintenanceDocument] = field(default_factory=list)
+    maintenance_upload_name: Optional[str] = None
+    maintenance_documents_path: Optional[str] = None
+    maintenance_context_summary: dict[str, Any] = field(default_factory=dict)
     messages: list[dict[str, str]] = field(default_factory=list)
     review_candidates: list[dict[str, Any]] = field(default_factory=list)
     review_cache_key: Optional[str] = None
@@ -190,6 +197,7 @@ class SessionState:
         return {
             "session_id": self.session_id,
             "filename": self.filename,
+            "dataframe_path": self.dataframe_path,
             "profile": self.profile,
             "selected_well_column": self.selected_well_column,
             "selected_time_column": self.selected_time_column,
@@ -207,6 +215,10 @@ class SessionState:
             "annotations_path": self.annotations_path,
             "task_spec": self.task_spec,
             "task_spec_path": self.task_spec_path,
+            "maintenance_documents": self.maintenance_documents,
+            "maintenance_upload_name": self.maintenance_upload_name,
+            "maintenance_documents_path": self.maintenance_documents_path,
+            "maintenance_context_summary": self.maintenance_context_summary,
             "messages": self.messages,
             "review_candidates": self.review_candidates,
             "review_cache_key": self.review_cache_key,

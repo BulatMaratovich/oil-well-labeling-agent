@@ -609,6 +609,13 @@
             <button id="uploadBtn">Импортировать</button>
           </div>
 
+          <div class="control-group">
+            <label for="maintenanceInput">Maintenance docs, опционально</label>
+            <input id="maintenanceInput" type="file" accept=".txt,.md,.log,.csv,.xlsx,.xls">
+            <button id="maintenanceUploadBtn" class="secondary">Загрузить контекст</button>
+            <div id="maintenanceStatus" class="status">Maintenance-контекст не загружен.</div>
+          </div>
+
           <div class="stats">
             <div class="stat">
               <span>Строк</span>
@@ -740,6 +747,7 @@
             <div id="reviewInspectorExplanation" class="status" style="margin-top:8px;"></div>
             <div id="reviewInspectorMeta" class="chip-row" style="margin-top:10px;"></div>
             <div id="reviewInspectorRuleTrace" class="status" style="margin-top:10px;"></div>
+            <div id="reviewInspectorContext" class="status" style="margin-top:10px;"></div>
             <div id="reviewInspectorFeatures" class="status" style="margin-top:10px;"></div>
           </div>
 
@@ -816,11 +824,16 @@
       let isCandidateSearchPending = false;
       let latestPlotRequestId = 0;
       let isChatPending = false;
+      let isMaintenanceUploadPending = false;
       let latestPlotWarning = null;
       let latestTaskSpecLabelTaxonomy = [];
+      let latestMaintenanceContext = null;
 
       const fileInput = document.getElementById("fileInput");
       const uploadBtn = document.getElementById("uploadBtn");
+      const maintenanceInput = document.getElementById("maintenanceInput");
+      const maintenanceUploadBtn = document.getElementById("maintenanceUploadBtn");
+      const maintenanceStatus = document.getElementById("maintenanceStatus");
       const seriesSelect = document.getElementById("seriesSelect");
       const chatInput = document.getElementById("chatInput");
       const chatBtn = document.getElementById("chatBtn");
@@ -879,6 +892,40 @@
           ? "Идет расчет..."
           : "Поиск кандидатов";
       }
+
+      function updateMaintenanceUploadButton() {
+        maintenanceUploadBtn.disabled = !sessionId || isMaintenanceUploadPending;
+        maintenanceUploadBtn.textContent = isMaintenanceUploadPending
+          ? "Загрузка..."
+          : "Загрузить контекст";
+      }
+
+      function updateMaintenanceStatus(context) {
+        latestMaintenanceContext = context || null;
+        if (!context || !context.document_count) {
+          maintenanceStatus.textContent = "Maintenance-контекст не загружен.";
+          return;
+        }
+
+        const parts = [
+          context.filename ? `файл: ${context.filename}` : "",
+          `документов: ${context.document_count}`,
+        ];
+        if (context.used_in_last_search) {
+          parts.push(`фактов: ${context.fact_count || 0}`);
+          parts.push(`кандидатов с контекстом: ${context.matched_candidate_count || 0}`);
+          if (context.low_confidence_fact_count) {
+            parts.push(`low-confidence facts: ${context.low_confidence_fact_count}`);
+          }
+        } else {
+          parts.push("будет применён при следующем поиске кандидатов");
+        }
+        if (!context.llm_configured) {
+          parts.push("LLM не настроен, используется rule-based extraction");
+        }
+        maintenanceStatus.textContent = parts.filter(Boolean).join(" · ");
+      }
+
       const cursorSlider = document.getElementById("cursorSlider");
       const cursorValue = document.getElementById("cursorValue");
       const recommendationStatus = document.getElementById("recommendationStatus");
@@ -897,6 +944,7 @@
       const reviewInspectorExplanation = document.getElementById("reviewInspectorExplanation");
       const reviewInspectorMeta = document.getElementById("reviewInspectorMeta");
       const reviewInspectorRuleTrace = document.getElementById("reviewInspectorRuleTrace");
+      const reviewInspectorContext = document.getElementById("reviewInspectorContext");
       const reviewInspectorFeatures = document.getElementById("reviewInspectorFeatures");
 
       function getSelectedSeries() {
@@ -1400,6 +1448,32 @@
         return `Local features: ${escapeHtml(rendered.join(" · "))}`;
       }
 
+      function buildContextHtml(facts = [], flags = []) {
+        const contextFacts = Array.isArray(facts) ? facts : [];
+        const contextFlags = Array.isArray(flags) ? flags : [];
+        if (!contextFacts.length && !contextFlags.length) {
+          return "Context: maintenance facts не найдены.";
+        }
+
+        const renderedFacts = contextFacts.map(item => {
+          const parts = [
+            item.event_type || "event",
+            item.event_date ? formatStamp(item.event_date) : "",
+            item.asset_id ? `asset=${item.asset_id}` : "",
+            item.action_summary || "",
+            item.extraction_confidence ? `confidence=${item.extraction_confidence}` : "",
+          ].filter(Boolean);
+          return escapeHtml(parts.join(" · "));
+        });
+        const factsText = renderedFacts.length
+          ? renderedFacts.join("<br>")
+          : "maintenance facts не найдены.";
+        const flagsText = contextFlags.length
+          ? `<div style="margin-top:6px;">flags: ${escapeHtml(contextFlags.join(", "))}</div>`
+          : "";
+        return `Context: ${factsText}${flagsText}`;
+      }
+
       function updateReviewInspector() {
         const annotation = getEditingAnnotation();
         const candidate = annotation ? null : getActiveCandidate();
@@ -1411,6 +1485,7 @@
           reviewInspectorExplanation.textContent = "";
           reviewInspectorMeta.innerHTML = "";
           reviewInspectorRuleTrace.textContent = "";
+          reviewInspectorContext.textContent = "";
           reviewInspectorFeatures.textContent = "";
           return;
         }
@@ -1458,6 +1533,10 @@
         ].map(item => `<span class="chip">${escapeHtml(item)}</span>`).join("");
         reviewInspectorRuleTrace.innerHTML = buildRuleTraceHtml(
           isCandidate ? candidate.rule_trace : annotation.rule_trace
+        );
+        reviewInspectorContext.innerHTML = buildContextHtml(
+          isCandidate ? candidate.maintenance_facts : [],
+          isCandidate ? candidate.context_flags : []
         );
         reviewInspectorFeatures.innerHTML = buildFeaturesHtml(
           isCandidate ? candidate.local_features : annotation.local_features
@@ -2051,9 +2130,13 @@
         latestCandidateIntervalStats = [];
         activeCandidateIndex = null;
         latestCandidatesComputed = false;
+        latestMaintenanceContext = data.maintenance_context || null;
         chatBox.innerHTML = "";
+        maintenanceInput.value = "";
 
         populateProfile(data.profile, data.defaults);
+        updateMaintenanceStatus(data.maintenance_context);
+        updateMaintenanceUploadButton();
         if (data.task_spec?.label_taxonomy?.length) {
           updateLabelSelect(data.task_spec.label_taxonomy);
         }
@@ -2061,6 +2144,43 @@
         await refreshPlot({ allowInitialWellSelection: true, useScopeDates: true });
         updateCandidateSearchButton();
         refreshLearning();
+      }
+
+      async function uploadMaintenance() {
+        if (!sessionId) {
+          alert("Сначала импортируйте основной ряд.");
+          return;
+        }
+        const file = maintenanceInput.files[0];
+        if (!file) return;
+
+        isMaintenanceUploadPending = true;
+        updateMaintenanceUploadButton();
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const response = await fetch(`/api/maintenance/${sessionId}`, {
+            method: "POST",
+            body: formData
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            alert(detailText(data.detail, "Ошибка загрузки maintenance-контекста"));
+            return;
+          }
+
+          latestCandidatesComputed = false;
+          latestCandidateIntervals = [];
+          latestCandidateIntervalStats = [];
+          activeCandidateIndex = null;
+          updateCandidateIntervals([], []);
+          updateMaintenanceStatus(data.maintenance_context);
+          surfaceStatus.textContent = "Контекст загружен. Нажмите «Поиск кандидатов», чтобы применить его к review-очереди.";
+          flashPlotBanner("Maintenance-контекст обновлён");
+        } finally {
+          isMaintenanceUploadPending = false;
+          updateMaintenanceUploadButton();
+        }
       }
 
       async function sendChat() {
@@ -2075,8 +2195,6 @@
         try {
           const payload = {
             message,
-            anomaly_goal: message,
-            chart_preferences: message,
             window_size: windowSize.value,
             statistical_threshold_pct: statisticalThresholdPct.value,
             recommendation_mode: recommendationMode.value
@@ -2168,6 +2286,7 @@
 
           latestPlotWarning = data.plot_warning || null;
           latestCandidatesComputed = Boolean(data.candidates_computed);
+          updateMaintenanceStatus(data.maintenance_context || latestMaintenanceContext);
           if (data.statistical_threshold_pct !== null && data.statistical_threshold_pct !== undefined) {
             statisticalThresholdPct.value = data.statistical_threshold_pct;
           }
@@ -2463,6 +2582,7 @@
       }
 
       uploadBtn.addEventListener("click", uploadFile);
+      maintenanceUploadBtn.addEventListener("click", uploadMaintenance);
       chatBtn.addEventListener("click", sendChat);
       refreshPlotBtn.addEventListener("click", searchCandidates);
       acceptCandidateBtn.addEventListener("click", () => submitReview("accept"));
@@ -2473,6 +2593,7 @@
       resetXRangeBtn.addEventListener("click", resetViewport);
       resetRecommendationBtn.addEventListener("click", resetRecommendation);
       clearEditingBtn.addEventListener("click", clearEditingMode);
+      updateMaintenanceUploadButton();
       annotationsTableBody.addEventListener("click", event => {
         const target = event.target.closest("button[data-action]");
         if (!target) return;
